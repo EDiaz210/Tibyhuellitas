@@ -1,0 +1,20 @@
+{
+  "version": 2,
+  "buildCommand": "echo 'No build needed'",
+  "public": true,
+  "rewrites": [
+    { "source": "/verify-email", "destination": "/verify-email.html" },
+    { "source": "/reset-password", "destination": "/reset-password.html" }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "Access-Control-Allow-Origin",
+          "value": "*"
+        }
+      ]
+    }
+  ]
+}
