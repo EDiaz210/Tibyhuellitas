@@ -789,7 +789,10 @@ class _PetCardState extends State<_PetCard> {
                   Navigator.pushNamed(
                     context,
                     '/edit_pet_refuge',
-                    arguments: widget.pet,
+                    arguments: {
+                      'pet': widget.pet,
+                      'readOnly': true,
+                    },
                   ).then((_) => setState(() {}));
                 },
                 child: Container(

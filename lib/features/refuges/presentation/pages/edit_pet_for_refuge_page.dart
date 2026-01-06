@@ -3,8 +3,13 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 class EditPetForRefugePage extends StatefulWidget {
   final Map<String, dynamic>? pet;
+  final bool readOnly;
 
-  const EditPetForRefugePage({Key? key, this.pet}) : super(key: key);
+  const EditPetForRefugePage({
+    Key? key,
+    this.pet,
+    this.readOnly = false,
+  }) : super(key: key);
 
   @override
   State<EditPetForRefugePage> createState() => _EditPetForRefugePageState();
@@ -32,12 +37,20 @@ class _EditPetForRefugePageState extends State<EditPetForRefugePage> {
     super.initState();
     _nameController = TextEditingController(text: widget.pet?['name'] ?? '');
     _breedController = TextEditingController(text: widget.pet?['breed'] ?? '');
-    _ageController = TextEditingController(text: widget.pet?['age']?.toString() ?? '');
+    _ageController = TextEditingController(text: widget.pet?['age_in_months']?.toString() ?? '');
     _selectedSpecies = widget.pet?['species'];
     _selectedGender = widget.pet?['gender'];
     _selectedStatus = widget.pet?['status'];
-    _isVaccinated = widget.pet?['health_status']?.toString().contains('vaccinated') ?? false;
-    _isNeutered = widget.pet?['health_status']?.toString().contains('neutered') ?? false;
+    
+    // Parsear health_status (puede ser array o string)
+    final healthStatus = widget.pet?['health_status'];
+    if (healthStatus is List) {
+      _isVaccinated = healthStatus.contains('vaccinated');
+      _isNeutered = healthStatus.contains('neutered');
+    } else if (healthStatus is String) {
+      _isVaccinated = healthStatus.contains('vaccinated');
+      _isNeutered = healthStatus.contains('neutered');
+    }
   }
 
   @override
@@ -56,7 +69,9 @@ class _EditPetForRefugePageState extends State<EditPetForRefugePage> {
         backgroundColor: const Color(0xFF1ABC9C),
         elevation: 0,
         title: Text(
-          widget.pet == null ? 'Nueva Mascota' : 'Editar ${widget.pet!['name']}',
+          widget.readOnly 
+              ? 'Ver ${widget.pet!['name']}'
+              : (widget.pet == null ? 'Nueva Mascota' : 'Editar ${widget.pet!['name']}'),
           style: const TextStyle(
             color: Colors.white,
             fontWeight: FontWeight.bold,
@@ -77,6 +92,7 @@ class _EditPetForRefugePageState extends State<EditPetForRefugePage> {
               // Nombre
               TextFormField(
                 controller: _nameController,
+                enabled: !widget.readOnly,
                 decoration: InputDecoration(
                   labelText: 'Nombre',
                   border: OutlineInputBorder(
@@ -102,7 +118,7 @@ class _EditPetForRefugePageState extends State<EditPetForRefugePage> {
                   prefixIcon: const Icon(Icons.category),
                 ),
                 items: _species.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
-                onChanged: (value) => setState(() => _selectedSpecies = value),
+                onChanged: widget.readOnly ? null : (value) => setState(() => _selectedSpecies = value),
                 validator: (value) {
                   if (value == null) return 'Selecciona una especie';
                   return null;
@@ -113,6 +129,7 @@ class _EditPetForRefugePageState extends State<EditPetForRefugePage> {
               // Raza
               TextFormField(
                 controller: _breedController,
+                enabled: !widget.readOnly,
                 decoration: InputDecoration(
                   labelText: 'Raza',
                   border: OutlineInputBorder(
@@ -134,13 +151,14 @@ class _EditPetForRefugePageState extends State<EditPetForRefugePage> {
                   prefixIcon: const Icon(Icons.wc),
                 ),
                 items: _genders.map((g) => DropdownMenuItem(value: g, child: Text(g))).toList(),
-                onChanged: (value) => setState(() => _selectedGender = value),
+                onChanged: widget.readOnly ? null : (value) => setState(() => _selectedGender = value),
               ),
               const SizedBox(height: 16),
 
               // Edad
               TextFormField(
                 controller: _ageController,
+                enabled: !widget.readOnly,
                 decoration: InputDecoration(
                   labelText: 'Edad (años)',
                   border: OutlineInputBorder(
@@ -163,7 +181,7 @@ class _EditPetForRefugePageState extends State<EditPetForRefugePage> {
                   prefixIcon: const Icon(Icons.check_circle),
                 ),
                 items: _statuses.map((s) => DropdownMenuItem(value: s, child: Text(_statusLabel(s)))).toList(),
-                onChanged: (value) => setState(() => _selectedStatus = value),
+                onChanged: widget.readOnly ? null : (value) => setState(() => _selectedStatus = value),
               ),
               const SizedBox(height: 16),
 
@@ -176,49 +194,65 @@ class _EditPetForRefugePageState extends State<EditPetForRefugePage> {
               CheckboxListTile(
                 title: const Text('Vacunada'),
                 value: _isVaccinated,
-                onChanged: (value) => setState(() => _isVaccinated = value ?? false),
+                onChanged: widget.readOnly ? null : (value) => setState(() => _isVaccinated = value ?? false),
               ),
               CheckboxListTile(
                 title: const Text('Esterilizada/Castrada'),
                 value: _isNeutered,
-                onChanged: (value) => setState(() => _isNeutered = value ?? false),
+                onChanged: widget.readOnly ? null : (value) => setState(() => _isNeutered = value ?? false),
               ),
               const SizedBox(height: 24),
 
               // Botones
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.pop(context),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
+              if (!widget.readOnly)
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.pop(context),
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
                         ),
-                      ),
-                      child: const Text('Cancelar'),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: _savePet,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF1ABC9C),
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                      child: const Text(
-                        'Guardar',
-                        style: TextStyle(color: Colors.white),
+                        child: const Text('Cancelar'),
                       ),
                     ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: _savePet,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF1ABC9C),
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                        child: const Text(
+                          'Guardar',
+                          style: TextStyle(color: Colors.white),
+                        ),
+                      ),
+                    ),
+                  ],
+                )
+              else
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(context),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF1ABC9C),
+                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 24),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
                   ),
-                ],
-              ),
+                  child: const Text(
+                    'Cerrar',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                ),
             ],
           ),
         ),
@@ -258,9 +292,8 @@ class _EditPetForRefugePageState extends State<EditPetForRefugePage> {
               'species': _selectedSpecies,
               'breed': _breedController.text,
               'gender': _selectedGender,
-              'age': int.tryParse(_ageController.text) ?? 0,
-              'status': _selectedStatus,
-              'health_status': healthStatus.join(','),
+              'age_in_months': int.tryParse(_ageController.text) ?? 0,
+              'health_status': healthStatus,
               'updated_at': DateTime.now().toIso8601String(),
             })
             .eq('id', petId);

@@ -122,8 +122,15 @@ class MyApp extends StatelessWidget {
           '/refuge_home': (context) => const RefugeMainNavigationScreen(),
           '/add_pet_refuge': (context) => const AddPetForRefugePage(),
           '/edit_pet_refuge': (context) {
-            final pet = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
-            return EditPetForRefugePage(pet: pet);
+            final args = ModalRoute.of(context)?.settings.arguments;
+            if (args is Map<String, dynamic>) {
+              final pet = args['pet'] as Map<String, dynamic>?;
+              final readOnly = args['readOnly'] as bool? ?? false;
+              return EditPetForRefugePage(pet: pet, readOnly: readOnly);
+            } else if (args is Map<String, dynamic>) {
+              return EditPetForRefugePage(pet: args);
+            }
+            return const EditPetForRefugePage();
           },
           '/refuge_pets': (context) => const RefugePetsPage(),
           '/refuge_requests': (context) => const RefugeAdoptionRequestsPage(),
