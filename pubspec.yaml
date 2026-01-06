@@ -1,5 +1,5 @@
-name: tibyfood
-description: "A new Flutter project."
+name: tibyhuellitas
+description: "TIBYHUELLITAS - Social mobile application for pet adoption and rescue centers management."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -69,6 +69,37 @@ dependencies:
   
   # Fonts
   google_fonts: ^6.3.0
+  
+  # Location & GPS
+  geolocator: ^12.0.0
+  geocoding: ^2.1.0
+  permission_handler: ^11.0.1
+  
+  # Maps (OpenStreetMap)
+  flutter_map: ^6.2.0
+  latlong2: ^0.9.1
+  
+  # Gemini AI
+  google_generative_ai: ^0.4.0
+  
+  # Notifications
+  flutter_local_notifications: ^17.1.0
+  
+  # Google Sign-in (OAuth)
+  google_sign_in: ^6.2.0
+  
+  # Firebase Messaging for Push Notifications
+  firebase_messaging: ^14.7.10
+  firebase_core: ^2.32.0
+  
+  # Image picker
+  image_picker: ^1.0.8
+  
+  # Camera
+  camera: ^0.10.5
+  
+  # UUID
+  uuid: ^4.0.0
 
 dev_dependencies:
   flutter_test:
@@ -95,6 +126,7 @@ flutter:
   # To add assets to your application, add an assets section, like this:
   assets:
     - web/icons/Icon-192.png
+    - .env
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

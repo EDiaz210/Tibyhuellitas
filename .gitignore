@@ -43,3 +43,22 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Environment variables (NUNCA commitar claves de API)
+.env
+.env.local
+.env.*.local
+
+# SQL files (No subir scripts de base de datos)
+*.sql
+CLEANUP_REMOVE_TRIGGER_SYNC.sql
+CREATE_REFUGE_TRIGGER.sql
+CREATE_TEST_ADOPTION_REQUEST.sql
+DIAGNOSTICO.sql
+FIX_ENUM_Y_TRIGGER.sql
+FIX_RLS_SIMPLIFIED.sql
+FIX_TRIGGER_COMPLETE.sql
+SETUP_FINAL_TRIGGER.sql
+SETUP_RLS_POLICIES.sql
+SUPABASE_SETUP.sql
+TRIGGER_SYNC_ACCOUNT_TYPE.sql

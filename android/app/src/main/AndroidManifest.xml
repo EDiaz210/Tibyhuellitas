@@ -1,7 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET"/>
     <application
-        android:label="tibyfood"
+        android:label="tibyhuellitas"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
@@ -25,13 +25,13 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
-            <!-- Deep Links for TibyFood -->
+            <!-- Deep Links for TIBYHUELLITAS -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>
                 <category android:name="android.intent.category.BROWSABLE"/>
-                <data android:scheme="tibyfood" android:host="home"/>
-                <data android:scheme="tibyfood" android:host="verified"/>
+                <data android:scheme="tibyhuellitas" android:host="home"/>
+                <data android:scheme="tibyhuellitas" android:host="verified"/>
             </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.

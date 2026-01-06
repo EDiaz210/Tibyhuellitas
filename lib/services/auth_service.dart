@@ -16,7 +16,7 @@ class AuthService {
           .eq('id', session.user.id)
           .single();
 
-      return AppUser.fromJson(response as Map<String, dynamic>);
+      return AppUser.fromJson(response);
     } catch (e) {
       print('Error getting current user: $e');
       return null;
@@ -53,7 +53,7 @@ class AuthService {
           .select()
           .single();
 
-      return AppUser.fromJson(userResponse as Map<String, dynamic>);
+      return AppUser.fromJson(userResponse);
     } catch (e) {
       print('Error during registration: $e');
       rethrow;
@@ -90,7 +90,7 @@ class AuthService {
           .eq('id', response.user!.id)
           .single();
 
-      return AppUser.fromJson(userResponse as Map<String, dynamic>);
+      return AppUser.fromJson(userResponse);
     } catch (e) {
       print('Error during login: $e');
       rethrow;
@@ -158,7 +158,7 @@ class AuthService {
           .select()
           .single();
 
-      return AppUser.fromJson(response as Map<String, dynamic>);
+      return AppUser.fromJson(response);
     } catch (e) {
       print('Error updating user profile: $e');
       rethrow;

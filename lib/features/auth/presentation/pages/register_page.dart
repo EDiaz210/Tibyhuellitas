@@ -113,7 +113,7 @@ class _RegisterPageState extends State<RegisterPage> {
                             ),
                             const SizedBox(height: 16),
                             Text(
-                              'TibyFood',
+                              'TIBYHUELLITAS',
                               style: Theme.of(context).textTheme.displayMedium?.copyWith(
                                 color: Theme.of(context).colorScheme.primary,
                               ),
