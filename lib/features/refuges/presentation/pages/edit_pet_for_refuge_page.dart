@@ -63,6 +63,19 @@ class _EditPetForRefugePageState extends State<EditPetForRefugePage> {
 
   @override
   Widget build(BuildContext context) {
+    // Validar que hay un pet a editar
+    if (widget.pet == null && !widget.readOnly) {
+      return Scaffold(
+        appBar: AppBar(
+          backgroundColor: const Color(0xFF1ABC9C),
+          title: const Text('Error'),
+        ),
+        body: const Center(
+          child: Text('No hay mascota para editar'),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: Colors.grey[50],
       appBar: AppBar(
@@ -275,38 +288,47 @@ class _EditPetForRefugePageState extends State<EditPetForRefugePage> {
 
   Future<void> _savePet() async {
     if (!_formKey.currentState!.validate()) return;
+    
+    // Solo editar, nunca crear
+    if (widget.pet == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Error: No hay mascota para editar'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
 
     try {
       final healthStatus = <String>[];
       if (_isVaccinated) healthStatus.add('vaccinated');
       if (_isNeutered) healthStatus.add('neutered');
 
-      final petId = widget.pet?['id'];
+      final petId = widget.pet!['id'];
 
-      if (petId != null) {
-        // Editar
-        await supabase
-            .from('pets')
-            .update({
-              'name': _nameController.text,
-              'species': _selectedSpecies,
-              'breed': _breedController.text,
-              'gender': _selectedGender,
-              'age_in_months': int.tryParse(_ageController.text) ?? 0,
-              'health_status': healthStatus,
-              'updated_at': DateTime.now().toIso8601String(),
+      // Editar
+      await supabase
+          .from('pets')
+          .update({
+            'name': _nameController.text,
+            'species': _selectedSpecies,
+            'breed': _breedController.text,
+            'gender': _selectedGender,
+            'age_in_months': int.tryParse(_ageController.text) ?? 0,
+            'health_status': healthStatus,
+            'updated_at': DateTime.now().toIso8601String(),
             })
             .eq('id', petId);
 
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Mascota actualizada'),
-              backgroundColor: Colors.green,
-            ),
-          );
-          Navigator.pop(context, true);
-        }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Mascota actualizada'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        Navigator.pop(context, true);
       }
     } catch (e) {
       if (mounted) {
