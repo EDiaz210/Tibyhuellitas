@@ -23,12 +23,22 @@ class RefugeBloc extends Bloc<RefugeEvent, RefugeState> {
     FetchAllRefuges event,
     Emitter<RefugeState> emit,
   ) async {
+    print('🏠 RefugeBloc: FetchAllRefuges started');
     emit(const RefugeLoading());
     final result = await getAllRefuges(NoParams());
 
     result.fold(
-      (failure) => emit(RefugeError(message: failure.message)),
-      (refuges) => emit(RefugeLoaded(refuges: refuges)),
+      (failure) {
+        print('❌ RefugeBloc: Error fetching refuges: ${failure.message}');
+        emit(RefugeError(message: failure.message));
+      },
+      (refuges) {
+        print('✅ RefugeBloc: FetchAllRefuges success - ${refuges.length} refuges');
+        for (var refuge in refuges) {
+          print('   - ${refuge.name}: (${refuge.latitude}, ${refuge.longitude})');
+        }
+        emit(RefugeLoaded(refuges: refuges));
+      },
     );
   }
 
@@ -36,6 +46,7 @@ class RefugeBloc extends Bloc<RefugeEvent, RefugeState> {
     FetchNearbyRefuges event,
     Emitter<RefugeState> emit,
   ) async {
+    print('🏠 RefugeBloc: FetchNearbyRefuges started (${event.latitude}, ${event.longitude})');
     emit(const RefugeLoading());
     final result = await getNearbyRefuges(
       GetNearbyRefugesParams(
@@ -46,8 +57,17 @@ class RefugeBloc extends Bloc<RefugeEvent, RefugeState> {
     );
 
     result.fold(
-      (failure) => emit(RefugeError(message: failure.message)),
-      (refuges) => emit(RefugeLoaded(refuges: refuges)),
+      (failure) {
+        print('❌ RefugeBloc: Error fetching nearby refuges: ${failure.message}');
+        emit(RefugeError(message: failure.message));
+      },
+      (refuges) {
+        print('✅ RefugeBloc: FetchNearbyRefuges success - ${refuges.length} refuges');
+        for (var refuge in refuges) {
+          print('   - ${refuge.name}: (${refuge.latitude}, ${refuge.longitude})');
+        }
+        emit(RefugeLoaded(refuges: refuges));
+      },
     );
   }
 }

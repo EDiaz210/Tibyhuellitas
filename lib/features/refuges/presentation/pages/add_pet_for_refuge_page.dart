@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dart:io';
+import '../../../../core/services/pets_sync_service.dart';
+import '../../../../core/services/notification_service.dart';
+import '../../../../injection_container.dart';
 
 class AddPetForRefugePage extends StatefulWidget {
   const AddPetForRefugePage({Key? key}) : super(key: key);
@@ -212,18 +215,8 @@ class _AddPetForRefugePageState extends State<AddPetForRefugePage> {
       final user = supabase.auth.currentUser;
       if (user == null) throw Exception('Usuario no autenticado');
 
-      // Obtener ID del refugio
-      final refugeData = await supabase
-          .from('refuges')
-          .select('id')
-          .eq('id', user.id)
-          .maybeSingle();
-
-      if (refugeData == null) {
-        throw Exception('Refugio no encontrado');
-      }
-
-      final refugeId = refugeData['id'];
+      // Obtener ID del refugio (refuges.id == users.id, así que usamos user.id directamente)
+      final refugeId = user.id;
 
       // Construir array de health_status
       final List<String> healthStatus = [];
@@ -241,10 +234,10 @@ class _AddPetForRefugePageState extends State<AddPetForRefugePage> {
       if (description.contains('Apto departamento')) personalityTraits.add('apartment_friendly');
 
       // Insertar mascota
-      await supabase.from('pets').insert({
+      final response = await supabase.from('pets').insert({
         'name': petName,
         'species': speciesMap[selectedSpecies] ?? 'other',
-        'breed': selectedBreed,
+        'breed': selectedBreed ?? 'Otro',
         'gender': genderMap[selectedGender] ?? 'male',
         'age_in_months': ageMonths,
         'description': description,
@@ -254,6 +247,25 @@ class _AddPetForRefugePageState extends State<AddPetForRefugePage> {
         'additional_notes': healthNotes,
         'refuge_id': refugeId,
       }).select();
+
+      // Notificar a PetsSyncService para que actualice listeners
+      if (response.isNotEmpty) {
+        final newPet = response[0] as Map<String, dynamic>;
+        PetsSyncService().notifyListeners(newPet);
+        print('✅ Notificación enviada a PetsSyncService por nueva mascota');
+        
+        // Enviar notificación push al usuario sobre nueva mascota disponible
+        try {
+          final notificationService = getIt<NotificationService>();
+          final refugeName = await _getRefugeName(refugeId);
+          await notificationService.showPetAvailableNotification(
+            petName: petName,
+            refugeName: refugeName,
+          );
+        } catch (e) {
+          print('Error sending pet notification: $e');
+        }
+      }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -271,6 +283,20 @@ class _AddPetForRefugePageState extends State<AddPetForRefugePage> {
       if (mounted) {
         setState(() => isLoading = false);
       }
+    }
+  }
+
+  Future<String> _getRefugeName(String refugeId) async {
+    try {
+      final response = await supabase
+          .from('refuges')
+          .select('name')
+          .eq('id', refugeId)
+          .single();
+      return response['name'] as String? ?? 'El refugio';
+    } catch (e) {
+      print('Error getting refuge name: $e');
+      return 'El refugio';
     }
   }
 
@@ -690,8 +716,8 @@ class _DescriptionSection extends StatelessWidget {
                   onTap: () {
                     final currentText = controller.text;
                     final newText = currentText.isEmpty
-                        ? '+ $suggestion'
-                        : '$currentText\n+ $suggestion';
+                        ? suggestion
+                        : '$currentText\n$suggestion';
                     controller.text = newText;
                     onDescriptionChanged(newText);
                   },

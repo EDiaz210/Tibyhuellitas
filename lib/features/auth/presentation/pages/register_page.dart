@@ -7,6 +7,7 @@ import '../bloc/auth_event.dart';
 import '../bloc/auth_state.dart';
 import '../widgets/custom_text_field.dart';
 import '../widgets/loading_overlay.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' hide AuthState;
 import 'email_verification_sent_page.dart';
 import 'welcome_page.dart';
 
@@ -23,15 +24,12 @@ class _RegisterPageState extends State<RegisterPage> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
-  final _addressController = TextEditingController();
-  
-  late String _userRole;
+  final _cityController = TextEditingController();
   bool _isLoadingLocation = false;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _userRole = ModalRoute.of(context)?.settings.arguments as String? ?? 'adopter';
   }
 
   @override
@@ -40,7 +38,7 @@ class _RegisterPageState extends State<RegisterPage> {
     _emailController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
-    _addressController.dispose();
+    _cityController.dispose();
     super.dispose();
   }
 
@@ -76,9 +74,9 @@ class _RegisterPageState extends State<RegisterPage> {
 
       if (placemarks.isNotEmpty) {
         final place = placemarks.first;
-        final address =
-            '${place.street}, ${place.postalCode} ${place.locality}, ${place.country}';
-        _addressController.text = address;
+        // Extraer solo la ciudad
+        final city = place.locality ?? place.administrativeArea ?? 'Desconocida';
+        _cityController.text = city;
       }
     } catch (e) {
       _showError('Error al obtener ubicación: $e');
@@ -95,11 +93,13 @@ class _RegisterPageState extends State<RegisterPage> {
 
   void _handleSignUp() {
     if (_formKey.currentState!.validate()) {
+      print('📋 [REGISTER PAGE] Iniciando signup con accountType: adoptante');
       context.read<AuthBloc>().add(
             SignUpRequested(
               email: _emailController.text.trim(),
               password: _passwordController.text,
               displayName: _nameController.text.trim(),
+              accountType: 'adoptante',
             ),
           );
     }
@@ -109,7 +109,7 @@ class _RegisterPageState extends State<RegisterPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: BlocConsumer<AuthBloc, AuthState>(
-        listener: (context, state) {
+        listener: (context, state) async {
           if (state is AuthError) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
@@ -118,12 +118,20 @@ class _RegisterPageState extends State<RegisterPage> {
               ),
             );
           } else if (state is EmailVerificationRequired) {
+            // El usuario se registró correctamente
+            print('🔵 [REGISTER PAGE] Usuario registrado con email: ${state.email}');
+            
             // Mostrar pantalla de verificación de email
-            Navigator.of(context).pushReplacement(
-              MaterialPageRoute(
-                builder: (_) => EmailVerificationSentPage(email: state.email),
-              ),
-            );
+            if (context.mounted) {
+              Navigator.of(context).pushReplacement(
+                MaterialPageRoute(
+                  builder: (_) => EmailVerificationSentPage(
+                    email: state.email,
+                    displayName: _nameController.text.trim(),
+                  ),
+                ),
+              );
+            }
           } else if (state is AuthAuthenticated) {
             Navigator.of(context).pushReplacement(
               MaterialPageRoute(
@@ -217,40 +225,50 @@ class _RegisterPageState extends State<RegisterPage> {
                         // Address field (para ambos: refugio y adoptante)
                         Column(
                           children: [
-                            TextFormField(
-                              controller: _addressController,
-                              decoration: InputDecoration(
-                                labelText: 'Dirección',
-                                hintText: _userRole == 'refuge'
-                                    ? 'Ubicación del refugio'
-                                    : 'Tu dirección de residencia',
-                                prefixIcon: const Icon(Icons.location_on_outlined),
-                                suffixIcon: _isLoadingLocation
-                                    ? const SizedBox(
-                                        width: 20,
-                                        height: 20,
-                                        child: Padding(
-                                          padding: EdgeInsets.all(12),
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                          ),
-                                        ),
-                                      )
-                                    : IconButton(
-                                        icon: const Icon(Icons.gps_fixed),
-                                        onPressed: _getLocationAddress,
-                                        tooltip: 'Obtener ubicación actual',
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: TextFormField(
+                                    controller: _cityController,
+                                    decoration: InputDecoration(
+                                      labelText: 'Ciudad',
+                                      hintText: 'Tu ciudad',
+                                      prefixIcon: const Icon(Icons.location_city),
+                                      border: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(8),
                                       ),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    validator: (value) {
+                                      if (value == null || value.isEmpty) {
+                                        return 'Por favor ingresa o captura la ciudad';
+                                      }
+                                      return null;
+                                    },
+                                  ),
                                 ),
-                              ),
-                              validator: (value) {
-                                if (value == null || value.isEmpty) {
-                                  return 'Por favor ingresa o captura la dirección';
-                                }
-                                return null;
-                              },
+                                const SizedBox(width: 8),
+                                Container(
+                                  decoration: BoxDecoration(
+                                    border: Border.all(color: Colors.grey),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: _isLoadingLocation
+                                      ? SizedBox(
+                                          width: 56,
+                                          height: 56,
+                                          child: Center(
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                            ),
+                                          ),
+                                        )
+                                      : IconButton(
+                                          icon: const Icon(Icons.gps_fixed, size: 28),
+                                          onPressed: _getLocationAddress,
+                                          tooltip: 'Obtener ciudad actual',
+                                        ),
+                                ),
+                              ],
                             ),
                             const SizedBox(height: 16),
                           ],

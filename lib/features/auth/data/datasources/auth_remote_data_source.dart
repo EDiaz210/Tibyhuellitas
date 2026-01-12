@@ -12,6 +12,7 @@ abstract class AuthRemoteDataSource {
     required String email,
     required String password,
     String? displayName,
+    String? accountType,
   });
 
   Future<void> sendPasswordResetEmail({
@@ -59,17 +60,28 @@ class AuthRemoteDataSourceImpl implements AuthRemoteDataSource {
     required String email,
     required String password,
     String? displayName,
+    String? accountType,
   }) async {
     try {
+      final data = <String, dynamic>{};
+      if (displayName != null) data['display_name'] = displayName;
+      if (accountType != null) data['account_type'] = accountType;
+
+      print('📝 [AUTH DATASOURCE] Datos a enviar: $data');
+      print('📝 [AUTH DATASOURCE] Account Type: $accountType');
+
       final response = await supabaseClient.auth.signUp(
         email: email,
         password: password,
-        data: displayName != null ? {'display_name': displayName} : null,
+        data: data.isNotEmpty ? data : null,
       );
 
       if (response.user == null) {
         throw Exception('No se pudo crear la cuenta');
       }
+
+      print('✅ [AUTH DATASOURCE] Usuario creado con ID: ${response.user!.id}');
+      print('📊 [AUTH DATASOURCE] User metadata: ${response.user!.userMetadata}');
 
       return UserModel.fromSupabaseUser(response.user!);
     } on AuthException catch (e) {

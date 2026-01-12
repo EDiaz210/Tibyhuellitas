@@ -20,7 +20,10 @@ class AssistantPage extends StatelessWidget {
         backgroundColor: const Color(0xFFFF6B35),
         elevation: 0,
         leading: GestureDetector(
-          onTap: () => Navigator.pop(context),
+          onTap: () {
+            // Navegar al home del adoptante
+            Navigator.of(context).pushReplacementNamed('/home');
+          },
           child: const Icon(Icons.arrow_back, color: Colors.white),
         ),
         title: Row(

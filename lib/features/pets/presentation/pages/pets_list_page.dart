@@ -1,12 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../domain/entities/pet.dart';
 import '../bloc/pet_bloc.dart';
 import 'pet_detail_page.dart';
 import '../../../../core/services/auth_service.dart';
 import '../../../../core/services/favorites_service.dart';
 import '../../../../core/services/distance_service.dart';
+import '../../../../core/services/pets_sync_service.dart';
+import '../../../../core/services/notification_service.dart';
+import '../../../../core/utils/pet_age_calculator.dart';
+import '../../../../injection_container.dart';
 
 class PetsListPage extends StatefulWidget {
   const PetsListPage({Key? key}) : super(key: key);
@@ -31,6 +36,22 @@ class _PetsListPageState extends State<PetsListPage> {
     super.initState();
     _loadFavorites();
     _initializeUserLocation();
+    _checkApprovedAdoptions();
+    
+    // Escuchar cambios en mascotas
+    final petsSyncService = PetsSyncService();
+    petsSyncService.addListener((record) {
+      print('🔔 Cambio detectado en mascotas, recargando lista');
+      context.read<PetBloc>().add(const FetchAllPets());
+    });
+  }
+
+  @override
+  void dispose() {
+    final petsSyncService = PetsSyncService();
+    petsSyncService.removeListener((_) {});
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> _initializeUserLocation() async {
@@ -55,10 +76,37 @@ class _PetsListPageState extends State<PetsListPage> {
     });
   }
 
-  @override
-  void dispose() {
-    _searchController.dispose();
-    super.dispose();
+  Future<void> _checkApprovedAdoptions() async {
+    try {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user == null) return;
+
+      // Obtener solicitudes de adopción aprobadas del usuario
+      final requests = await Supabase.instance.client
+          .from('adoption_requests')
+          .select('id, pets(name), refuges(name)')
+          .eq('user_id', user.id)
+          .eq('status', 'approved');
+
+      if (requests.isNotEmpty) {
+        // Mostrar notificación para cada adopción aprobada
+        final notificationService = getIt<NotificationService>();
+        
+        for (var request in requests) {
+          final petName = request['pets']?['name'] ?? 'mascota';
+          final refugeName = request['refuges']?['name'] ?? 'refugio';
+          
+          print('🎉 Notificando adopción aprobada: $petName de $refugeName');
+          
+          await notificationService.showRequestApprovedNotification(
+            refugeName: refugeName,
+            petName: petName,
+          );
+        }
+      }
+    } catch (e) {
+      print('Error checking approved adoptions: $e');
+    }
   }
 
   void _applyFilter(String filter) {
@@ -68,7 +116,7 @@ class _PetsListPageState extends State<PetsListPage> {
         ? const FetchAllPets()
         : SearchPetsEvent(
             query: '',
-            speciesFilter: filter == 'dog' ? 'dog' : 'cat',
+            speciesFilter: filter,
           );
     context.read<PetBloc>().add(event);
   }
@@ -96,10 +144,15 @@ class _PetsListPageState extends State<PetsListPage> {
     return Scaffold(
       backgroundColor: const Color(0xFFF8F9FA),
       body: SafeArea(
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
+        child: RefreshIndicator(
+          onRefresh: () async {
+            context.read<PetBloc>().add(const FetchAllPets());
+            await Future.delayed(const Duration(seconds: 1));
+          },
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
               // Header con saludo y notificaciones
               Padding(
                 padding: const EdgeInsets.all(16.0),
@@ -211,26 +264,53 @@ class _PetsListPageState extends State<PetsListPage> {
               // Filter chips
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                child: Row(
-                  children: [
-                    _FilterChip(
-                      label: 'Todos',
-                      isSelected: _selectedFilter == 'todos',
-                      onTap: () => _applyFilter('todos'),
-                    ),
-                    const SizedBox(width: 12),
-                    _FilterChip(
-                      label: '🐕 Perros',
-                      isSelected: _selectedFilter == 'dog',
-                      onTap: () => _applyFilter('dog'),
-                    ),
-                    const SizedBox(width: 12),
-                    _FilterChip(
-                      label: '🐈 Gatos',
-                      isSelected: _selectedFilter == 'cat',
-                      onTap: () => _applyFilter('cat'),
-                    ),
-                  ],
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      _FilterChip(
+                        label: 'Todos',
+                        isSelected: _selectedFilter == 'todos',
+                        onTap: () => _applyFilter('todos'),
+                      ),
+                      const SizedBox(width: 12),
+                      _FilterChip(
+                        label: '🐕 Perros',
+                        isSelected: _selectedFilter == 'dog',
+                        onTap: () => _applyFilter('dog'),
+                      ),
+                      const SizedBox(width: 12),
+                      _FilterChip(
+                        label: '🐈 Gatos',
+                        isSelected: _selectedFilter == 'cat',
+                        onTap: () => _applyFilter('cat'),
+                      ),
+                      const SizedBox(width: 12),
+                      _FilterChip(
+                        label: '🐰 Conejos',
+                        isSelected: _selectedFilter == 'rabbit',
+                        onTap: () => _applyFilter('rabbit'),
+                      ),
+                      const SizedBox(width: 12),
+                      _FilterChip(
+                        label: '🐦 Aves',
+                        isSelected: _selectedFilter == 'bird',
+                        onTap: () => _applyFilter('bird'),
+                      ),
+                      const SizedBox(width: 12),
+                      _FilterChip(
+                        label: '🐭 Roedores',
+                        isSelected: _selectedFilter == 'rodent',
+                        onTap: () => _applyFilter('rodent'),
+                      ),
+                      const SizedBox(width: 12),
+                      _FilterChip(
+                        label: '📦 Otro',
+                        isSelected: _selectedFilter == 'other',
+                        onTap: () => _applyFilter('other'),
+                      ),
+                    ],
+                  ),
                 ),
               ),
               const SizedBox(height: 16),
@@ -287,6 +367,7 @@ class _PetsListPageState extends State<PetsListPage> {
               const SizedBox(height: 24),
             ],
           ),
+            ),
         ),
       ),
     );
@@ -355,11 +436,55 @@ class _PetGridCard extends StatefulWidget {
 class _PetGridCardState extends State<_PetGridCard> {
   double? _distance;
   bool _loadingDistance = true;
+  String? _refugeLocation;
+  String? _refugeName;
+  bool _loadingRefugeLocation = true;
+  final supabase = Supabase.instance.client;
 
   @override
   void initState() {
     super.initState();
     _calculateDistance();
+    _loadRefugeData();
+  }
+
+  Future<void> _loadRefugeData() async {
+    try {
+      print('DEBUG: Loading refuge data for refugeId: ${widget.pet.refugeId}');
+      
+      final refugeData = await supabase
+          .from('refuges')
+          .select('name, address')
+          .eq('id', widget.pet.refugeId)
+          .maybeSingle();
+
+      print('DEBUG: Refuge data received: $refugeData');
+
+      if (refugeData != null && mounted) {
+        setState(() {
+          _refugeName = refugeData['name'] ?? 'Refugio sin nombre';
+          _refugeLocation = refugeData['address'] ?? 'Sin ubicación';
+          _loadingRefugeLocation = false;
+        });
+        print('DEBUG: Set state - Name: $_refugeName, Location: $_refugeLocation');
+      } else if (mounted) {
+        print('DEBUG: Refuge data is null');
+        setState(() {
+          _refugeName = 'Refugio no encontrado';
+          _refugeLocation = 'Sin ubicación';
+          _loadingRefugeLocation = false;
+        });
+      }
+    } catch (e) {
+      print('ERROR loading refuge data: $e');
+      if (mounted) {
+        setState(() {
+          _refugeName = 'Error cargando refugio';
+          _refugeLocation = 'Sin ubicación';
+          _loadingRefugeLocation = false;
+        });
+      }
+    }
   }
 
   Future<void> _calculateDistance() async {
@@ -494,7 +619,7 @@ class _PetGridCardState extends State<_PetGridCard> {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      '${widget.pet.breed} • ${(widget.pet.ageInMonths / 12).toStringAsFixed(0)} años',
+                      '${widget.pet.breed} • Edad Humana ${PetAgeCalculator.calculateHumanAge(widget.pet.ageInMonths)} años',
                       style: TextStyle(
                         fontSize: 11,
                         color: Colors.grey.shade600,
@@ -512,7 +637,7 @@ class _PetGridCardState extends State<_PetGridCard> {
                         ),
                         const SizedBox(width: 2),
                         Expanded(
-                          child: _loadingDistance
+                          child: _loadingRefugeLocation
                               ? const SizedBox(
                                   height: 12,
                                   width: 30,
@@ -521,14 +646,13 @@ class _PetGridCardState extends State<_PetGridCard> {
                                   ),
                                 )
                               : Text(
-                                  _distance != null
-                                      ? widget.distanceService
-                                          .formatDistance(_distance!)
-                                      : 'Sin ubicación',
+                                  '${_refugeName ?? 'Refugio'} - ${_refugeLocation ?? 'Sin ubicación'}',
                                   style: TextStyle(
                                     fontSize: 11,
                                     color: Colors.grey.shade600,
                                   ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
                         ),
                       ],

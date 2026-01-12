@@ -2,10 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+import 'package:get_it/get_it.dart';
 import 'dart:async';
+import 'package:geolocator/geolocator.dart';
+import 'package:geocoding/geocoding.dart';
 
 import 'core/theme/app_theme.dart';
 import 'core/services/gemini_service.dart';
+import 'core/services/notification_service.dart';
 import 'core/repositories/adoption_requests_repository.dart';
 import 'core/repositories/user_repository.dart';
 import 'features/location/presentation/bloc/location_bloc.dart';
@@ -21,17 +26,32 @@ import 'features/refuges/presentation/pages/edit_pet_for_refuge_page.dart';
 import 'features/refuges/presentation/pages/refuge_pets_page.dart';
 import 'features/refuges/presentation/pages/refuge_adoption_requests_page.dart';
 import 'features/refuges/presentation/pages/refuge_profile_page.dart';
+import 'features/auth/presentation/pages/role_selection_page.dart';
 import 'injection_container.dart';
 
 // Global Supabase client
 late SupabaseClient _supabaseClient;
+final getIt = GetIt.instance;
 
 SupabaseClient getSupabaseClient() {
-  if (_supabaseClient == null) {
-    throw Exception('Supabase not initialized');
-  }
   return _supabaseClient;
 }
+
+// Global state for refuge navigation
+class RefugeNavigationState extends ChangeNotifier {
+  int _selectedIndex = 0;
+  
+  int get selectedIndex => _selectedIndex;
+  
+  void setIndex(int index) {
+    if (_selectedIndex != index) {
+      _selectedIndex = index;
+      notifyListeners();
+    }
+  }
+}
+
+final refugeNavigationState = RefugeNavigationState();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -92,6 +112,10 @@ void main() async {
   // Configure dependencies
   configureDependencies();
 
+  // Initialize Notification Service
+  final notificationService = getIt<NotificationService>();
+  await notificationService.initialize();
+
   runApp(const MyApp());
 }
 
@@ -118,23 +142,36 @@ class MyApp extends StatelessWidget {
         theme: AppTheme.lightTheme,
         home: const LoginScreen(),
         routes: {
+          '/role_selection': (context) {
+            final args = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
+            return RoleSelectionPage(
+              email: args?['email'] ?? '',
+              displayName: args?['displayName'] ?? 'Usuario',
+            );
+          },
           '/home': (context) => const MainNavigationScreen(),
           '/refuge_home': (context) => const RefugeMainNavigationScreen(),
           '/add_pet_refuge': (context) => const AddPetForRefugePage(),
           '/edit_pet_refuge': (context) {
             final args = ModalRoute.of(context)?.settings.arguments;
-            if (args is Map<String, dynamic>) {
+            
+            // Si es un Map con 'pet' y 'readOnly' (desde Ver o Editar)
+            if (args is Map<String, dynamic> && args.containsKey('pet')) {
               final pet = args['pet'] as Map<String, dynamic>?;
               final readOnly = args['readOnly'] as bool? ?? false;
               return EditPetForRefugePage(pet: pet, readOnly: readOnly);
-            } else if (args is Map<String, dynamic>) {
+            } 
+            // Si es solo un pet (compatibilidad)
+            else if (args is Map<String, dynamic>) {
               return EditPetForRefugePage(pet: args);
             }
+            
             return const EditPetForRefugePage();
           },
-          '/refuge_pets': (context) => const RefugePetsPage(),
-          '/refuge_requests': (context) => const RefugeAdoptionRequestsPage(),
-          '/refuge_profile': (context) => const RefugeProfilePage(),
+          '/refuge_pets': (context) => const RefugeMainNavigationScreen(),
+          '/refuge_adoption_requests': (context) => const RefugeMainNavigationScreen(),
+          '/refuge_requests': (context) => const RefugeMainNavigationScreen(),
+          '/refuge_profile': (context) => const RefugeMainNavigationScreen(),
         },
       ),
     );
@@ -147,7 +184,6 @@ class MainNavigationScreen extends StatefulWidget {
   @override
   State<MainNavigationScreen> createState() => _MainNavigationScreenState();
 }
-
 class _MainNavigationScreenState extends State<MainNavigationScreen> {
   int _selectedIndex = 0;
 
@@ -208,7 +244,6 @@ class ProfilePage extends StatefulWidget {
   @override
   State<ProfilePage> createState() => _ProfilePageState();
 }
-
 class _ProfilePageState extends State<ProfilePage> {
   late UserRepository _userRepository;
   late AdoptionRequestsRepository _adoptionRepository;
@@ -423,8 +458,13 @@ class _ProfilePageState extends State<ProfilePage> {
         final currentUserId = Supabase.instance.client.auth.currentUser?.id ?? '';
 
         return Scaffold(
-          body: ListView(
-            children: [
+          body: RefreshIndicator(
+            onRefresh: () async {
+              setState(() {});
+              await Future.delayed(const Duration(milliseconds: 500));
+            },
+            child: ListView(
+              children: [
               // Header con info de usuario
               Container(
                 color: const Color(0xFFFF6B35),
@@ -537,6 +577,7 @@ class _ProfilePageState extends State<ProfilePage> {
                 ),
               ),
             ],
+            ),
           ),
         );
       },
@@ -584,8 +625,6 @@ class RefugeMainNavigationScreen extends StatefulWidget {
 
 class _RefugeMainNavigationScreenState
     extends State<RefugeMainNavigationScreen> {
-  int _selectedIndex = 0;
-
   late final List<Widget> _pages = [
     const RefugeHomePage(),                           // Índice 0: Home del Refugio
     const RefugePetsPage(),                           // Índice 1: Mis Mascotas
@@ -594,37 +633,79 @@ class _RefugeMainNavigationScreenState
   ];
 
   @override
+  void initState() {
+    super.initState();
+    // Listen to navigation state changes
+    refugeNavigationState.addListener(_onNavigationIndexChanged);
+  }
+
+  @override
+  void dispose() {
+    refugeNavigationState.removeListener(_onNavigationIndexChanged);
+    super.dispose();
+  }
+
+  void _onNavigationIndexChanged() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: IndexedStack(
-        index: _selectedIndex,
-        children: _pages,
-      ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _selectedIndex,
-        onTap: (index) => setState(() => _selectedIndex = index),
-        type: BottomNavigationBarType.fixed,
-        selectedItemColor: const Color(0xFF1ABC9C),
-        unselectedItemColor: Colors.grey,
-        showUnselectedLabels: true,
-        items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.home),
-            label: 'Inicio',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.pets),
-            label: 'Mascotas',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.notifications),
-            label: 'Solicitudes',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.person),
-            label: 'Perfil',
-          ),
-        ],
+    return WillPopScope(
+      onWillPop: () async => false,
+      child: Scaffold(
+        body: IndexedStack(
+          index: refugeNavigationState.selectedIndex,
+          children: _pages,
+        ),
+        bottomNavigationBar: BottomNavigationBar(
+          currentIndex: refugeNavigationState.selectedIndex,
+          onTap: (index) {
+            String route;
+            switch (index) {
+              case 0:
+                route = '/refuge_home';
+                break;
+              case 1:
+                route = '/refuge_pets';
+                break;
+              case 2:
+                route = '/refuge_adoption_requests';
+                break;
+              case 3:
+                route = '/refuge_profile';
+                break;
+              default:
+                route = '/refuge_home';
+            }
+            refugeNavigationState.setIndex(index);
+            Navigator.pushReplacementNamed(context, route);
+          },
+          type: BottomNavigationBarType.fixed,
+          selectedItemColor: const Color(0xFF1ABC9C),
+          unselectedItemColor: Colors.grey,
+          showUnselectedLabels: true,
+          items: const [
+            BottomNavigationBarItem(
+              icon: Icon(Icons.home),
+              label: 'Inicio',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.pets),
+              label: 'Mascotas',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.notifications),
+              label: 'Solicitudes',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.person),
+              label: 'Perfil',
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -675,24 +756,30 @@ class _LoginScreenState extends State<LoginScreen> {
       );
 
       if (mounted) {
-        // Detectar rol basado en account_type
+        // Detectar rol basado en account_type en tabla users
         final user = supabase.auth.currentUser;
         String routeName = '/home'; // Default para adoptantes
 
         if (user != null) {
           try {
+            // Buscar account_type en tabla users
             final userData = await supabase
                 .from('users')
                 .select('account_type')
                 .eq('id', user.id)
                 .single();
 
-            if (userData['account_type'] == 'refugio') {
+            final accountType = userData['account_type'] as String?;
+            print('🔍 account_type en BD: $accountType');
+            
+            if (accountType == 'refugio') {
               routeName = '/refuge_home';
+              print('✓ Redirigiendo a refuge_home');
+            } else {
+              print('✓ Redirigiendo a home (adoptante)');
             }
-            print('✓ Usuario autenticado: ${userData['account_type']}');
           } catch (e) {
-            print('⚠️ Error obteniendo account_type: $e');
+            print('⚠️ Error detectando tipo de cuenta: $e');
             // Si hay error, ir a /home (default para adoptantes)
           }
         }
@@ -715,6 +802,49 @@ class _LoginScreenState extends State<LoginScreen> {
           SnackBar(content: Text('Error de login: $e')),
         );
         setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  void _handleGoogleSignInFromMain(BuildContext context) async {
+    print('🔵 [MAIN LOGIN] Google button pressed');
+    
+    try {
+      final GoogleSignIn googleSignIn = GoogleSignIn(
+        scopes: ['email', 'profile'],
+      );
+
+      final googleUser = await googleSignIn.signIn();
+      
+      if (googleUser == null) {
+        print('❌ [MAIN LOGIN] Google Sign-In cancelled');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Google Sign-In cancelled')),
+          );
+        }
+        return;
+      }
+
+      print('✅ [MAIN LOGIN] Google Sign-In successful: ${googleUser.email}');
+      
+      if (mounted) {
+        // Navegar a la página de selección de rol
+        // El usuario se registrará en Supabase cuando seleccione su rol
+        Navigator.of(context).pushReplacementNamed(
+          '/role_selection',
+          arguments: {
+            'email': googleUser.email,
+            'displayName': googleUser.displayName ?? 'Usuario Google',
+          },
+        );
+      }
+    } catch (e) {
+      print('❌ [MAIN LOGIN] Google Sign-In error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
       }
     }
   }
@@ -948,13 +1078,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     SizedBox(
                       width: double.infinity,
                       child: OutlinedButton(
-                        onPressed: () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Google Sign-in disponible próximamente'),
-                            ),
-                          );
-                        },
+                        onPressed: _isLoading ? null : () => _handleGoogleSignInFromMain(context),
                         style: OutlinedButton.styleFrom(
                           padding: const EdgeInsets.symmetric(vertical: 14),
                           side: const BorderSide(color: Color(0xFFE5E7EB)),
@@ -1731,6 +1855,7 @@ class _SignUpAdoptantScreenState extends State<SignUpAdoptantScreen> {
   final TextEditingController _cityController = TextEditingController();
   bool _obscurePassword = true;
   bool _isLoading = false;
+  bool _isLoadingLocation = false;
 
   @override
   void dispose() {
@@ -1763,14 +1888,14 @@ class _SignUpAdoptantScreenState extends State<SignUpAdoptantScreen> {
     try {
       final supabase = getSupabaseClient();
 
-      // Crear usuario en Supabase Auth (el trigger hará el insert en public.users)
+      // Crear usuario en Supabase Auth
       final AuthResponse res = await supabase.auth.signUp(
         email: _emailController.text.trim(),
         password: _passwordController.text,
         data: {
           'full_name': _fullNameController.text,
           'phone': _phoneController.text,
-          'city': _cityController.text,  // Adoptante solo tiene ciudad
+          'city': _cityController.text,
           'account_type': 'adoptante',
         },
       );
@@ -1779,9 +1904,9 @@ class _SignUpAdoptantScreenState extends State<SignUpAdoptantScreen> {
         throw Exception('No se pudo crear la cuenta de usuario');
       }
 
-      if (!mounted) return;
+      print('✅ Adoptante registrado exitosamente');
 
-      // El trigger ya insertó en public.users automáticamente
+      if (!mounted) return;
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1893,12 +2018,67 @@ class _SignUpAdoptantScreenState extends State<SignUpAdoptantScreen> {
                     keyboardType: TextInputType.phone,
                   ),
                   const SizedBox(height: 16),
-                  // City
-                  _buildTextField(
-                    label: 'CIUDAD',
-                    hint: 'Quito',
-                    controller: _cityController,
-                    icon: Icons.location_city,
+                  // City con GPS
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'CIUDAD',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF6B7280),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _cityController,
+                              decoration: InputDecoration(
+                                hintText: 'Quito',
+                                hintStyle: const TextStyle(color: Color(0xFFD1D5DB)),
+                                prefixIcon: const Icon(Icons.location_city, color: Color(0xFF9CA3AF)),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                  borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
+                                ),
+                                enabledBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                  borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
+                                ),
+                                filled: true,
+                                fillColor: const Color(0xFFFAFAFA),
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Container(
+                            decoration: BoxDecoration(
+                              border: Border.all(color: const Color(0xFFE5E7EB)),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: _isLoadingLocation
+                                ? const SizedBox(
+                                    width: 56,
+                                    height: 56,
+                                    child: Center(
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    ),
+                                  )
+                                : IconButton(
+                                    icon: const Icon(Icons.gps_fixed, size: 28, color: Color(0xFFFF6B35)),
+                                    onPressed: _getLocationAddress,
+                                    tooltip: 'Obtener ciudad actual',
+                                  ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 32),
                   // Register button
@@ -1967,6 +2147,54 @@ class _SignUpAdoptantScreenState extends State<SignUpAdoptantScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  Future<void> _getLocationAddress() async {
+    setState(() => _isLoadingLocation = true);
+
+    try {
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        _showError('Por favor habilita el GPS');
+        return;
+      }
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.deniedForever ||
+          permission == LocationPermission.denied) {
+        _showError('Permiso de ubicación requerido');
+        return;
+      }
+
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.best,
+      );
+
+      final placemarks = await placemarkFromCoordinates(
+        position.latitude,
+        position.longitude,
+      );
+
+      if (placemarks.isNotEmpty) {
+        final place = placemarks.first;
+        final city = place.locality ?? place.administrativeArea ?? 'Desconocida';
+        _cityController.text = city;
+      }
+    } catch (e) {
+      _showError('Error al obtener ubicación: $e');
+    } finally {
+      if (mounted) setState(() => _isLoadingLocation = false);
+    }
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: Colors.red),
     );
   }
 
@@ -2081,6 +2309,9 @@ class _SignUpRefugioScreenState extends State<SignUpRefugioScreen> {
   final TextEditingController _cityController = TextEditingController();
   bool _obscurePassword = true;
   bool _isLoading = false;
+  bool _isLoadingLocation = false;
+  double? _latitude;
+  double? _longitude;
 
   @override
   void dispose() {
@@ -2093,34 +2324,65 @@ class _SignUpRefugioScreenState extends State<SignUpRefugioScreen> {
   }
 
   void _handleSignUp() {
-    if (_refugioNameController.text.isEmpty ||
-        _emailController.text.isEmpty ||
-        _passwordController.text.isEmpty ||
-        _phoneController.text.isEmpty ||
-        _cityController.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Por favor completa todos los campos')),
-      );
+    print('🔍 Validando formulario...');
+    
+    // Validar todos los campos requeridos
+    if (_refugioNameController.text.isEmpty) {
+      _showError('❌ Nombre del refugio requerido');
+      return;
+    }
+    if (_emailController.text.isEmpty) {
+      _showError('❌ Email requerido');
+      return;
+    }
+    if (_passwordController.text.isEmpty) {
+      _showError('❌ Contraseña requerida');
+      return;
+    }
+    if (_phoneController.text.isEmpty) {
+      _showError('❌ Teléfono requerido');
+      return;
+    }
+    if (_cityController.text.isEmpty) {
+      _showError('❌ Ciudad requerida');
       return;
     }
 
-    setState(() => _isLoading = true);
+    // VALIDACIÓN CRÍTICA: GPS es OBLIGATORIO
+    if (_latitude == null || _longitude == null) {
+      _showError('❌ OBLIGATORIO: Presiona el botón GPS para capturar tu ubicación');
+      return;
+    }
 
+    if (_latitude == 0 && _longitude == 0) {
+      _showError('❌ Coordenadas inválidas. Intenta capturar GPS nuevamente');
+      return;
+    }
+
+    print('✅ Todos los campos válidos');
+    print('   Nombre: ${_refugioNameController.text}');
+    print('   Email: ${_emailController.text}');
+    print('   Teléfono: ${_phoneController.text}');
+    print('   Ciudad: ${_cityController.text}');
+    print('   Coordenadas GPS: $_latitude, $_longitude');
+
+    setState(() => _isLoading = true);
     _performSignUp();
   }
 
   Future<void> _performSignUp() async {
     try {
+      print('📝 Iniciando registro de refugio...');
       final supabase = getSupabaseClient();
 
-      // Crear usuario en Supabase Auth (el trigger hará el insert en public.users)
+      print('👤 Creando usuario en Supabase Auth...');
       final AuthResponse res = await supabase.auth.signUp(
         email: _emailController.text.trim(),
         password: _passwordController.text,
         data: {
           'full_name': _refugioNameController.text,
           'phone': _phoneController.text,
-          'city': _cityController.text,  // Solo ciudad, igual que adoptante
+          'city': _cityController.text,
           'account_type': 'refugio',
         },
       );
@@ -2129,50 +2391,157 @@ class _SignUpRefugioScreenState extends State<SignUpRefugioScreen> {
         throw Exception('No se pudo crear la cuenta de usuario');
       }
 
+      print('✅ Usuario creado: ${res.user!.id}');
+
+      print('💾 Guardando refugio con coordenadas GPS...');
+      await supabase.from('refuges').insert({
+        'id': res.user!.id,
+        'name': _refugioNameController.text,
+        'email': _emailController.text.trim(),
+        'phone_number': _phoneController.text,
+        'address': _cityController.text,
+        'latitude': _latitude!,
+        'longitude': _longitude!,
+        'description': '',
+        'website': null,
+        'type': 'shelter',
+        'logo_url': null,
+        'total_pets': 0,
+        'adopted_pets': 0,
+        'pending_requests': 0,
+        'created_at': DateTime.now().toIso8601String(),
+      });
+
+      print('✅ Refugio registrado exitosamente');
+
       if (!mounted) return;
 
-      // El trigger ya insertó en public.users automáticamente
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('✅ ¡Registro exitoso! Bienvenido. Verifica tu email para confirmar.'),
+          backgroundColor: Color(0xFF1ABC9C),
+          duration: Duration(seconds: 3),
+        ),
+      );
 
+      await Future.delayed(const Duration(seconds: 2));
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('¡Registro exitoso! Bienvenido al refugio. Por favor verifica tu email.'),
-            backgroundColor: Color(0xFF1ABC9C),
-            duration: Duration(seconds: 3),
-          ),
-        );
-        
-        // Esperar un poco y regresar
-        await Future.delayed(const Duration(seconds: 2));
-        if (mounted) {
-          Navigator.of(context).pop();
-        }
+        Navigator.of(context).pop();
       }
     } on AuthException catch (e) {
+      print('❌ Error Auth: ${e.message}');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error de autenticación: ${e.message}'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        _showError('Error: ${e.message}');
         setState(() => _isLoading = false);
       }
     } catch (e) {
+      print('❌ Error: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error al registrar refugio: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-        setState(() => _isLoading = false);
-      }
-    } finally {
-      if (mounted) {
+        _showError('Error: $e');
         setState(() => _isLoading = false);
       }
     }
+  }
+
+  Future<void> _getLocationAddress() async {
+    setState(() => _isLoadingLocation = true);
+
+    try {
+      print('🔍 Iniciando captura de GPS...');
+      
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        print('❌ GPS no está habilitado');
+        _showError('Por favor habilita el GPS en los ajustes del dispositivo');
+        return;
+      }
+      print('✅ GPS habilitado');
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      print('📍 Permiso actual: $permission');
+      
+      if (permission == LocationPermission.denied) {
+        print('📋 Pidiendo permiso...');
+        permission = await Geolocator.requestPermission();
+        print('📋 Permiso después de pedir: $permission');
+      }
+
+      if (permission == LocationPermission.deniedForever ||
+          permission == LocationPermission.denied) {
+        print('❌ Permiso denegado');
+        _showError('Permiso de ubicación requerido. Por favor habilita en ajustes');
+        return;
+      }
+
+      print('📡 Obteniendo posición...');
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.best,
+        timeLimit: const Duration(seconds: 30),
+      );
+
+      print('✅ Posición obtenida: ${position.latitude}, ${position.longitude}');
+
+      // Guardar coordenadas para el refugio
+      setState(() {
+        _latitude = position.latitude;
+        _longitude = position.longitude;
+      });
+      
+      print('💾 Coordenadas guardadas en estado:');
+      print('   Lat: $_latitude');
+      print('   Lon: $_longitude');
+
+      // Obtener ciudad por geocoding inverso
+      print('🔄 Realizando geocoding inverso...');
+      final placemarks = await placemarkFromCoordinates(
+        position.latitude,
+        position.longitude,
+      );
+
+      if (placemarks.isNotEmpty) {
+        final place = placemarks.first;
+        final city = place.locality ?? place.administrativeArea ?? 'Desconocida';
+        
+        setState(() {
+          _cityController.text = city;
+        });
+        
+        print('✅ Ciudad detectada: $city');
+        _showSuccess('Ubicación capturada: $city');
+      } else {
+        print('⚠️  No se encontraron ciudades para las coordenadas');
+        _showSuccess('GPS capturado pero no se pudo determinar la ciudad');
+      }
+    } catch (e) {
+      print('❌ Error: $e');
+      _showError('Error al obtener ubicación: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _isLoadingLocation = false);
+      }
+    }
+  }
+
+  void _showError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red,
+        duration: const Duration(seconds: 4),
+      ),
+    );
+  }
+
+  void _showSuccess(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.green,
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   @override
@@ -2244,12 +2613,101 @@ class _SignUpRefugioScreenState extends State<SignUpRefugioScreen> {
                     keyboardType: TextInputType.phone,
                   ),
                   const SizedBox(height: 16),
-                  // City
-                  _buildTextField(
-                    label: 'CIUDAD',
-                    hint: 'Quito',
-                    controller: _cityController,
-                    icon: Icons.location_city,
+                  // City con GPS
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'CIUDAD',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF6B7280),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _cityController,
+                              readOnly: false,
+                              decoration: InputDecoration(
+                                hintText: 'Presiona GPS para obtener ubicación',
+                                hintStyle: const TextStyle(color: Color(0xFFD1D5DB), fontSize: 12),
+                                prefixIcon: const Icon(Icons.location_city, color: Color(0xFF9CA3AF)),
+                                suffixIcon: _latitude != null && _longitude != null
+                                    ? const Icon(Icons.check_circle, color: Colors.green)
+                                    : null,
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                  borderSide: BorderSide(
+                                    color: _latitude != null && _longitude != null
+                                        ? Colors.green
+                                        : const Color(0xFFE5E7EB),
+                                  ),
+                                ),
+                                enabledBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                  borderSide: BorderSide(
+                                    color: _latitude != null && _longitude != null
+                                        ? Colors.green
+                                        : const Color(0xFFE5E7EB),
+                                  ),
+                                ),
+                                filled: true,
+                                fillColor: _latitude != null && _longitude != null
+                                    ? const Color(0xFFE8F5E9)
+                                    : const Color(0xFFFAFAFA),
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Container(
+                            decoration: BoxDecoration(
+                              border: Border.all(
+                                color: _latitude != null && _longitude != null
+                                    ? Colors.green
+                                    : const Color(0xFFE5E7EB),
+                              ),
+                              borderRadius: BorderRadius.circular(8),
+                              color: _latitude != null && _longitude != null
+                                  ? const Color(0xFFE8F5E9)
+                                  : Colors.white,
+                            ),
+                            child: _isLoadingLocation
+                                ? const SizedBox(
+                                    width: 56,
+                                    height: 56,
+                                    child: Center(
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        valueColor: AlwaysStoppedAnimation<Color>(
+                                          Color(0xFF1ABC9C),
+                                        ),
+                                      ),
+                                    ),
+                                  )
+                                : IconButton(
+                                    icon: Icon(
+                                      _latitude != null && _longitude != null
+                                          ? Icons.location_on
+                                          : Icons.gps_fixed,
+                                      size: 28,
+                                      color: _latitude != null && _longitude != null
+                                          ? Colors.green
+                                          : const Color(0xFF1ABC9C),
+                                    ),
+                                    onPressed: _getLocationAddress,
+                                    tooltip: _latitude != null && _longitude != null
+                                        ? 'Ubicación capturada: ($_latitude, $_longitude)'
+                                        : 'Capturar ubicación actual',
+                                  ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 32),
                   // Register button

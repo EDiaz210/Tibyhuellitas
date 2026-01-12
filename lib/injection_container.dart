@@ -144,8 +144,23 @@ class SupabaseGetAllPets implements GetAllPets {
   @override
   Future<Either<Failure, List<Pet>>> call(NoParams params) async {
     try {
+      // Obtener todas las mascotas
       final response = await supabase().from('pets').select();
-      final pets = (response as List).map((pet) {
+      
+      // Obtener mascotas que han sido adoptadas (solicitudes aprobadas)
+      final adoptedResponse = await supabase()
+          .from('adoption_requests')
+          .select('pet_id')
+          .eq('status', 'approved');
+      
+      final adoptedPetIds = (adoptedResponse as List)
+          .map((req) => req['pet_id'] as String)
+          .toSet();
+      
+      // Filtrar mascotas que NO están adoptadas
+      final pets = (response as List)
+          .where((pet) => !adoptedPetIds.contains(pet['id']))
+          .map((pet) {
         return Pet(
           id: pet['id'] as String,
           name: pet['name'] as String,
@@ -155,7 +170,7 @@ class SupabaseGetAllPets implements GetAllPets {
           ageInMonths: pet['age_in_months'] as int? ?? 0,
           gender: pet['gender'] as String? ?? 'No especificado',
           description: pet['description'] as String? ?? '',
-          photoUrls: List<String>.from(pet['photo_urls'] as List? ?? []),
+          photoUrls: pet['photo_url'] != null ? [pet['photo_url'] as String] : [],
           refugeId: pet['refuge_id'] as String,
           healthStatus: _parseHealthStatus(pet['health_status'] as List? ?? []),
           additionalNotes: pet['additional_notes'] as String?,
@@ -196,7 +211,7 @@ class SupabaseGetPetById implements GetPetById {
         ageInMonths: response['age_in_months'] as int? ?? 0,
         gender: response['gender'] as String? ?? 'No especificado',
         description: response['description'] as String? ?? '',
-        photoUrls: List<String>.from(response['photo_urls'] as List? ?? []),
+        photoUrls: response['photo_url'] != null ? [response['photo_url'] as String] : [],
         refugeId: response['refuge_id'] as String,
         healthStatus: _parseHealthStatus(response['health_status'] as List? ?? []),
         additionalNotes: response['additional_notes'] as String?,
@@ -221,6 +236,7 @@ class SupabaseSearchPets implements SearchPets {
   @override
   Future<Either<Failure, List<Pet>>> call(SearchPetsParams params) async {
     try {
+      // Obtener todas las mascotas
       var query = supabase().from('pets').select();
 
       if (params.speciesFilter != null) {
@@ -231,7 +247,20 @@ class SupabaseSearchPets implements SearchPets {
       }
 
       final response = await query;
+      
+      // Obtener mascotas que han sido adoptadas
+      final adoptedResponse = await supabase()
+          .from('adoption_requests')
+          .select('pet_id')
+          .eq('status', 'approved');
+      
+      final adoptedPetIds = (adoptedResponse as List)
+          .map((req) => req['pet_id'] as String)
+          .toSet();
+      
+      // Filtrar mascotas que NO están adoptadas y que coinciden con la búsqueda
       final pets = (response as List)
+          .where((pet) => !adoptedPetIds.contains(pet['id']))
           .map((pet) {
             return Pet(
               id: pet['id'] as String,
@@ -242,7 +271,7 @@ class SupabaseSearchPets implements SearchPets {
               ageInMonths: pet['age_in_months'] as int? ?? 0,
               gender: pet['gender'] as String? ?? 'No especificado',
               description: pet['description'] as String? ?? '',
-              photoUrls: List<String>.from(pet['photo_urls'] as List? ?? []),
+              photoUrls: pet['photo_url'] != null ? [pet['photo_url'] as String] : [],
               refugeId: pet['refuge_id'] as String,
               healthStatus: _parseHealthStatus(pet['health_status'] as List? ?? []),
               additionalNotes: pet['additional_notes'] as String?,
@@ -273,8 +302,12 @@ class SupabaseGetAllRefuges implements GetAllRefuges {
   @override
   Future<Either<Failure, List<Refuge>>> call(NoParams params) async {
     try {
+      print('🔍 SupabaseGetAllRefuges: Fetching refuges from Supabase...');
       final response = await supabase().from('refuges').select();
+      print('📊 SupabaseGetAllRefuges: Response received - ${response.length} items');
+      
       final refuges = (response as List).map((refuge) {
+        print('📍 Mapping refuge: ${refuge['name']} (lat=${refuge['latitude']}, lon=${refuge['longitude']})');
         return Refuge(
           id: refuge['id'] as String,
           name: refuge['name'] as String,
@@ -293,8 +326,10 @@ class SupabaseGetAllRefuges implements GetAllRefuges {
           createdAt: DateTime.parse(refuge['created_at'] as String),
         );
       }).toList();
+      print('✅ SupabaseGetAllRefuges: Successfully mapped ${refuges.length} refuges');
       return Right(refuges);
     } catch (e) {
+      print('❌ SupabaseGetAllRefuges: Error - $e');
       return Left(ServerFailure('Error fetching refuges: $e'));
     }
   }

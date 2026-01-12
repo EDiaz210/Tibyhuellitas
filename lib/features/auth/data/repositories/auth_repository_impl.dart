@@ -41,7 +41,13 @@ class AuthRepositoryImpl implements AuthRepository {
     required String email,
     required String password,
     String? displayName,
+    String? accountType,
   }) async {
+    print('🟡 [AUTH REPOSITORY] Parámetros recibidos:');
+    print('   - email: $email');
+    print('   - displayName: $displayName');
+    print('   - accountType: $accountType');
+    
     if (!await networkInfo.isConnected) {
       return const Left(NetworkFailure('Sin conexión a internet'));
     }
@@ -51,6 +57,7 @@ class AuthRepositoryImpl implements AuthRepository {
         email: email,
         password: password,
         displayName: displayName,
+        accountType: accountType,
       );
       return Right(user);
     } catch (e) {

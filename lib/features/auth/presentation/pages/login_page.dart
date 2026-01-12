@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+import 'package:tibyhuellitas/services/auth_service.dart';
 import '../bloc/auth_bloc.dart';
 import '../bloc/auth_event.dart';
 import '../bloc/auth_state.dart';
@@ -36,6 +38,64 @@ class _LoginPageState extends State<LoginPage> {
               password: _passwordController.text,
             ),
           );
+    }
+  }
+
+  void _handleGoogleSignIn() {
+    print('📱 [LOGIN PAGE] ====== BOTÓN DE GOOGLE PRESIONADO ======');
+    print('📱 [LOGIN PAGE] Iniciando Google Sign-In...');
+    
+    try {
+      final GoogleSignIn googleSignIn = GoogleSignIn(
+        scopes: ['email', 'profile'],
+      );
+
+      googleSignIn.signIn().then((googleUser) async {
+        if (googleUser != null) {
+          print('✅ [LOGIN PAGE] Google Sign-In successful: ${googleUser.email}');
+          
+          if (mounted) {
+            // Navegar a role_selection para registrar en Supabase
+            Navigator.of(context).pushReplacementNamed(
+              '/role_selection',
+              arguments: {
+                'email': googleUser.email,
+                'displayName': googleUser.displayName ?? 'Usuario Google',
+              },
+            );
+          }
+        } else {
+          print('❌ [LOGIN PAGE] Google Sign-In cancelled');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Google Sign-In cancelled'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+        }
+      }).catchError((error) {
+        print('📱 [LOGIN PAGE] ❌ Google Sign-In error: $error');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error: $error'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      });
+    } catch (e) {
+      print('📱 [LOGIN PAGE] ❌ Exception: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -182,6 +242,39 @@ class _LoginPageState extends State<LoginPage> {
                           child: ElevatedButton(
                             onPressed: isLoading ? null : _handleSignIn,
                             child: const Text('Iniciar sesión'),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Divider
+                        Row(
+                          children: [
+                            Expanded(child: Divider(color: Colors.grey[300])),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 16),
+                              child: Text(
+                                'o',
+                                style: Theme.of(context).textTheme.bodyMedium,
+                              ),
+                            ),
+                            Expanded(child: Divider(color: Colors.grey[300])),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Google Sign-In button
+                        SizedBox(
+                          height: 56,
+                          child: OutlinedButton(
+                            onPressed: isLoading ? null : _handleGoogleSignIn,
+                            child: const Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Text('G'),
+                                SizedBox(width: 8),
+                                Text('Continuar con Google'),
+                              ],
+                            ),
                           ),
                         ),
                         const SizedBox(height: 24),

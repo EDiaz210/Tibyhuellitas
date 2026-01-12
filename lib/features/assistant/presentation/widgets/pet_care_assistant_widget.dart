@@ -169,8 +169,14 @@ class _PetCareAssistantWidgetState extends State<PetCareAssistantWidget> {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
+    return RefreshIndicator(
+      onRefresh: () async {
+        _messageController.clear();
+        setState(() => _messages.clear());
+        await _initializeChat();
+      },
+      child: Column(
+        children: [
         // Chat messages
         Expanded(
           child: _messages.isEmpty
@@ -340,6 +346,7 @@ class _PetCareAssistantWidgetState extends State<PetCareAssistantWidget> {
           ),
         ),
       ],
+      ),
     );
   }
 }

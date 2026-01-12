@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'dart:math';
 import '../../domain/entities/pet.dart';
 import '../../../../core/services/distance_service.dart';
 import '../../../../core/repositories/adoption_requests_repository.dart';
@@ -26,34 +27,163 @@ class _PetDetailPageState extends State<PetDetailPage> {
   bool isFavorite = false;
   double? _distance;
   bool _loadingDistance = true;
+  String? _refugeName;
+  double? _refugeLatitude;
+  double? _refugeLongitude;
+  bool _loadingRefugeData = true;
+  final supabase = Supabase.instance.client;
+  final _distanceService = DistanceService();
+  Position? _userLocation;
+  bool _loadingUserLocation = true;
+  bool _hasExistingRequest = false;
+  bool _checkingRequest = true;
 
   @override
   void initState() {
     super.initState();
-    _calculateDistance();
+    _loadUserLocation();
+    _loadRefugeData();
+    _checkExistingRequest();
+  }
+
+  Future<void> _loadUserLocation() async {
+    try {
+      final location = await _distanceService.getCurrentLocation();
+      setState(() {
+        _userLocation = location;
+        _loadingUserLocation = false;
+      });
+      print('DEBUG PET_DETAIL: User location loaded: ${location?.latitude}, ${location?.longitude}');
+    } catch (e) {
+      print('ERROR loading user location: $e');
+      setState(() => _loadingUserLocation = false);
+    }
+  }
+
+  Future<void> _loadRefugeData() async {
+    try {
+      final refugeData = await supabase
+          .from('refuges')
+          .select('name, address, latitude, longitude')
+          .eq('id', widget.pet.refugeId)
+          .maybeSingle();
+
+      print('DEBUG PET_DETAIL: Refuge data received: $refugeData');
+
+      if (refugeData != null && mounted) {
+        setState(() {
+          _refugeName = refugeData['name'] ?? 'Refugio sin nombre';
+          _refugeLatitude = (refugeData['latitude'] as num?)?.toDouble();
+          _refugeLongitude = (refugeData['longitude'] as num?)?.toDouble();
+          _loadingRefugeData = false;
+        });
+        
+        print('DEBUG PET_DETAIL: Refuge data set - Name: $_refugeName, Lat: $_refugeLatitude, Lon: $_refugeLongitude');
+        
+        // Ahora que tenemos las coordenadas del refugio, esperamos a que se cargue la ubicación del usuario
+        // y luego calculamos la distancia
+        if (_refugeLatitude != null && _refugeLongitude != null) {
+          // Esperamos a que _userLocation se cargue
+          await Future.doWhile(() async {
+            await Future.delayed(const Duration(milliseconds: 100));
+            return _loadingUserLocation;
+          });
+          
+          print('DEBUG PET_DETAIL: User location is now available, calling _calculateDistance');
+          _calculateDistance();
+        } else {
+          print('DEBUG PET_DETAIL: ERROR - Refuge coordinates are null!');
+          setState(() => _loadingDistance = false);
+        }
+      } else {
+        print('DEBUG PET_DETAIL: Refuge data is null or widget not mounted');
+        setState(() {
+          _loadingRefugeData = false;
+          _loadingDistance = false;
+        });
+      }
+    } catch (e) {
+      print('ERROR loading refuge data: $e');
+      if (mounted) {
+        setState(() {
+          _refugeName = 'Error cargando refugio';
+          _loadingRefugeData = false;
+          _loadingDistance = false;
+        });
+      }
+    }
   }
 
   Future<void> _calculateDistance() async {
-    if (widget.userLocation == null || widget.distanceService == null) {
+    print('DEBUG PET_DETAIL: _calculateDistance called');
+    print('DEBUG PET_DETAIL: userLocation=$_userLocation');
+    print('DEBUG PET_DETAIL: distanceService=$_distanceService');
+    print('DEBUG PET_DETAIL: refugeLatitude=$_refugeLatitude, refugeLongitude=$_refugeLongitude');
+    
+    if (_userLocation == null || 
+        _refugeLatitude == null ||
+        _refugeLongitude == null) {
+      print('DEBUG PET_DETAIL: Missing data for distance calculation, setting false');
       setState(() => _loadingDistance = false);
       return;
     }
 
     try {
-      final distance = widget.distanceService!.calculateDistance(
-        widget.userLocation!.latitude,
-        widget.userLocation!.longitude,
-        4.7110, // Será dinámico desde refugio data
-        -74.0721, // Será dinámico desde refugio data
+      print('DEBUG PET_DETAIL: Calculating distance from (${_userLocation!.latitude}, ${_userLocation!.longitude}) to ($_refugeLatitude, $_refugeLongitude)');
+      
+      final distance = _distanceService.calculateDistance(
+        _userLocation!.latitude,
+        _userLocation!.longitude,
+        _refugeLatitude!,
+        _refugeLongitude!,
       );
 
+      print('DEBUG PET_DETAIL: Distance calculated: $distance');
+      
       setState(() {
         _distance = distance;
         _loadingDistance = false;
       });
+      
+      print('DEBUG PET_DETAIL: Distance state updated to $_distance');
     } catch (e) {
-      print('Error calculating distance: $e');
+      print('ERROR calculating distance: $e');
       setState(() => _loadingDistance = false);
+    }
+  }
+
+  Future<void> _checkExistingRequest() async {
+    try {
+      final user = supabase.auth.currentUser;
+      if (user == null) {
+        setState(() => _checkingRequest = false);
+        return;
+      }
+
+      final result = await supabase
+          .from('adoption_requests')
+          .select('status')
+          .eq('user_id', user.id)
+          .eq('pet_id', widget.pet.id)
+          .maybeSingle();
+
+      if (mounted) {
+        // Solo bloquear si existe una solicitud Y el estado es pending o approved
+        // Si fue rechazada, permitir enviar de nuevo
+        _hasExistingRequest = result != null && 
+            (result['status'] == 'pending' || result['status'] == 'approved');
+        
+        setState(() {
+          _checkingRequest = false;
+        });
+      }
+
+      print('DEBUG PET_DETAIL: User has active request for this pet: $_hasExistingRequest (status: ${result?['status']})');
+    } catch (e) {
+      print('ERROR checking existing request: $e');
+      if (mounted) {
+        setState(() => _checkingRequest = false);
+      }
     }
   }
 
@@ -70,12 +200,18 @@ class _PetDetailPageState extends State<PetDetailPage> {
 
     return Scaffold(
       backgroundColor: Colors.white,
-      body: Stack(
-        children: [
-          SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
+      body: RefreshIndicator(
+        onRefresh: () async {
+          _loadRefugeData();
+          _loadUserLocation();
+          await Future.delayed(const Duration(seconds: 1));
+        },
+        child: Stack(
+          children: [
+            SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                 // Imagen grande con fondo coloreado
                 Container(
                   width: double.infinity,
@@ -156,13 +292,13 @@ class _PetDetailPageState extends State<PetDetailPage> {
                         ),
                       ),
                       const SizedBox(height: 16),
-                      // Atributos: Edad, Sexo, Tamaño
+                      // Atributos: Edad Humana, Sexo, Raza
                       Row(
                         children: [
                           Expanded(
                             child: _AttributeCard(
-                              value: '${(widget.pet.ageInMonths / 12).toStringAsFixed(0)} años',
-                              label: 'Edad',
+                              value: _calculateHumanAge(widget.pet.ageInMonths),
+                              label: 'Edad Humana',
                             ),
                           ),
                           const SizedBox(width: 12),
@@ -177,8 +313,8 @@ class _PetDetailPageState extends State<PetDetailPage> {
                           const SizedBox(width: 12),
                           Expanded(
                             child: _AttributeCard(
-                              value: _getSizeLabel(widget.pet.size),
-                              label: 'Tamaño',
+                              value: widget.pet.breed,
+                              label: 'Raza',
                             ),
                           ),
                         ],
@@ -210,15 +346,15 @@ class _PetDetailPageState extends State<PetDetailPage> {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  const Text(
-                                    'Refugio Patitas Felices',
-                                    style: TextStyle(
+                                  Text(
+                                    _refugeName ?? 'Cargando refugio...',
+                                    style: const TextStyle(
                                       fontWeight: FontWeight.w600,
                                       fontSize: 14,
                                     ),
                                   ),
                                   const SizedBox(height: 2),
-                                  _loadingDistance
+                                  _loadingDistance || _loadingRefugeData || _loadingUserLocation
                                       ? const SizedBox(
                                           height: 12,
                                           width: 50,
@@ -227,10 +363,8 @@ class _PetDetailPageState extends State<PetDetailPage> {
                                           ),
                                         )
                                       : Text(
-                                          _distance != null &&
-                                                  widget.distanceService !=
-                                                      null
-                                              ? '${widget.distanceService!.formatDistance(_distance!)} de distancia'
+                                          _distance != null
+                                              ? '${_distanceService.formatDistance(_distance!)} de distancia'
                                               : 'Sin información de distancia',
                                           style: TextStyle(
                                             fontSize: 12,
@@ -273,7 +407,7 @@ class _PetDetailPageState extends State<PetDetailPage> {
                       const SizedBox(height: 24),
                       // Botón Solicitar Adopción - DENTRO DEL SCROLL
                       ElevatedButton(
-                        onPressed: () async {
+                        onPressed: _checkingRequest || _hasExistingRequest ? null : () async {
                           final user = Supabase.instance.client.auth.currentUser;
                           if (user == null) {
                             ScaffoldMessenger.of(context).showSnackBar(
@@ -322,16 +456,22 @@ class _PetDetailPageState extends State<PetDetailPage> {
                           }
                         },
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFFFF6B35),
+                          backgroundColor: _hasExistingRequest 
+                            ? Colors.grey 
+                            : const Color(0xFFFF6B35),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
                           ),
                           padding: const EdgeInsets.symmetric(vertical: 16),
                           minimumSize: const Size(double.infinity, 0),
                         ),
-                        child: const Text(
-                          'Solicitar Adopción ❤',
-                          style: TextStyle(
+                        child: Text(
+                          _checkingRequest
+                            ? 'Verificando...'
+                            : _hasExistingRequest
+                              ? 'Ya tiene solicitud para esta mascota'
+                              : 'Solicitar Adopción ❤',
+                          style: const TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.w600,
                             color: Colors.white,
@@ -387,20 +527,25 @@ class _PetDetailPageState extends State<PetDetailPage> {
           ),
         ],
       ),
+        ),
     );
   }
 
-  String _getSizeLabel(PetSize size) {
-    switch (size) {
-      case PetSize.small:
-        return 'Pequeño';
-      case PetSize.medium:
-        return 'Medio';
-      case PetSize.large:
-        return 'Grande';
-      default:
-        return 'Mediano';
+  String _calculateHumanAge(int ageInMonths) {
+    double humanAge;
+    
+    if (ageInMonths < 12) {
+      // Para perros menores a 12 meses: (meses / 12) × 15
+      // 9 meses = (9/12) × 15 = 11.25 años (12-14 años humanos)
+      humanAge = (ageInMonths / 12.0) * 15.0;
+    } else {
+      // Para perros 12+ meses: Edad humana = 16 × ln(edad en años) + 31
+      double ageInYears = ageInMonths / 12.0;
+      humanAge = 16 * log(ageInYears) + 31;
     }
+    
+    // Retornar con un decimal
+    return humanAge.toStringAsFixed(1);
   }
 }
 

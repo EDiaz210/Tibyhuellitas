@@ -25,6 +25,10 @@ abstract class NotificationService {
     required String refugeName,
     required String petName,
   });
+  Future<void> showPetAvailableNotification({
+    required String petName,
+    required String refugeName,
+  });
 }
 
 class NotificationServiceImpl implements NotificationService {
@@ -200,5 +204,45 @@ class NotificationServiceImpl implements NotificationService {
     );
 
     print('❌ Notificación enviada: Solicitud rechazada por $refugeName');
+  }
+
+  /// Notificación: Nueva mascota disponible para adopción
+  @override
+  Future<void> showPetAvailableNotification({
+    required String petName,
+    required String refugeName,
+  }) async {
+    const AndroidNotificationDetails androidDetails =
+        AndroidNotificationDetails(
+      'new_pets',
+      'Nuevas Mascotas',
+      channelDescription: 'Notificaciones cuando hay nuevas mascotas disponibles',
+      importance: Importance.high,
+      priority: Priority.high,
+      enableVibration: true,
+      enableLights: true,
+      color: Color.fromARGB(255, 33, 150, 243),
+    );
+
+    const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+    );
+
+    const NotificationDetails details = NotificationDetails(
+      android: androidDetails,
+      iOS: iosDetails,
+    );
+
+    await _plugin.show(
+      4,
+      '🐾 $petName disponible para adopción',
+      'El refugio $refugeName acaba de registrar a $petName. ¡No esperes más!',
+      details,
+      payload: 'pet_available:$refugeName:$petName',
+    );
+
+    print('🐾 Notificación enviada: $petName disponible por $refugeName');
   }
 }

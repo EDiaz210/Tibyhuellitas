@@ -54,6 +54,11 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     SignUpRequested event,
     Emitter<AuthState> emit,
   ) async {
+    print('🔵 [AUTH BLOC] SignUpRequested recibido');
+    print('   - email: ${event.email}');
+    print('   - displayName: ${event.displayName}');
+    print('   - accountType: ${event.accountType}');
+    
     emit(const AuthLoading());
 
     final result = await signUp(
@@ -61,6 +66,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         email: event.email,
         password: event.password,
         displayName: event.displayName,
+        accountType: event.accountType,
       ),
     );
 

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../../../core/services/pets_sync_service.dart';
+import '../../../../core/services/adoption_requests_sync_service.dart';
 
 class RefugeProfilePage extends StatefulWidget {
   const RefugeProfilePage({Key? key}) : super(key: key);
@@ -18,6 +20,14 @@ class _RefugeProfilePageState extends State<RefugeProfilePage> {
   late TextEditingController phoneController;
   late TextEditingController emailController;
   late TextEditingController descriptionController;
+  
+  // Servicios como variables para evitar crear nuevas instancias
+  late PetsSyncService _petsSyncService;
+  late AdoptionRequestsSyncService _adoptionSyncService;
+  
+  // Referencias a los callbacks para poder removerlos después
+  late Function(Map<String, dynamic>) _petsSyncCallback;
+  late Function(Map<String, dynamic>) _adoptionSyncCallback;
 
   @override
   void initState() {
@@ -27,10 +37,61 @@ class _RefugeProfilePageState extends State<RefugeProfilePage> {
     phoneController = TextEditingController();
     emailController = TextEditingController();
     descriptionController = TextEditingController();
+    
+    // Obtener referencias a los servicios singleton
+    _petsSyncService = PetsSyncService();
+    _adoptionSyncService = AdoptionRequestsSyncService();
+    
+    // Crear callbacks con referencias permanentes
+    _petsSyncCallback = (record) {
+      print('🔔 [RefugeProfilePage] Cambio detectado en mascotas');
+      if (mounted) {
+        setState(() {
+          _loadRefugeData();
+        });
+      }
+    };
+    
+    _adoptionSyncCallback = (record) {
+      print('🔔 [RefugeProfilePage] Cambio detectado en adoption_requests');
+      if (mounted) {
+        setState(() {
+          _loadRefugeData();
+        });
+      }
+    };
+    
+    // Inicializar listeners en background
+    _initializeListeners();
+  }
+
+  Future<void> _initializeListeners() async {
+    try {
+      print('🔧 [RefugeProfilePage] Iniciando listeners...');
+      // 1. Asegurar que los servicios estén escuchando PRIMERO
+      await _petsSyncService.startListening();
+      print('✅ [RefugeProfilePage] PetsSyncService escuchando');
+      
+      await _adoptionSyncService.startListening();
+      print('✅ [RefugeProfilePage] AdoptionSyncService escuchando');
+      
+      // 2. AHORA agregar listeners
+      _petsSyncService.addListener(_petsSyncCallback);
+      print('✅ [RefugeProfilePage] Listener de pets agregado');
+      
+      _adoptionSyncService.addListener(_adoptionSyncCallback);
+      print('✅ [RefugeProfilePage] Listener de adoption agregado');
+      
+      print('✅ [RefugeProfilePage] Listeners inicializados correctamente');
+    } catch (e) {
+      print('❌ [RefugeProfilePage] Error inicializando listeners: $e');
+    }
   }
 
   @override
   void dispose() {
+    _petsSyncService.removeListener(_petsSyncCallback);
+    _adoptionSyncService.removeListener(_adoptionSyncCallback);
     nameController.dispose();
     phoneController.dispose();
     emailController.dispose();
@@ -43,6 +104,7 @@ class _RefugeProfilePageState extends State<RefugeProfilePage> {
       final user = supabase.auth.currentUser;
       if (user == null) return;
 
+      // Obtener datos del refugio (refuges.id == users.id)
       final data = await supabase
           .from('refuges')
           .select()
@@ -53,7 +115,7 @@ class _RefugeProfilePageState extends State<RefugeProfilePage> {
         setState(() {
           refugeData = data;
           nameController.text = data['name'] ?? '';
-          phoneController.text = data['phone'] ?? '';
+          phoneController.text = data['phone_number'] ?? '';
           emailController.text = data['email'] ?? '';
           descriptionController.text = data['description'] ?? '';
         });
@@ -71,12 +133,15 @@ class _RefugeProfilePageState extends State<RefugeProfilePage> {
       final user = supabase.auth.currentUser;
       if (user == null) return;
 
-      await supabase.from('refuges').update({
-        'name': nameController.text,
-        'phone': phoneController.text,
-        'email': emailController.text,
-        'description': descriptionController.text,
-      }).eq('id', user.id);
+      // Update by refuge ID (not user.id)
+      if (refugeData != null && refugeData?['id'] != null) {
+        await supabase.from('refuges').update({
+          'name': nameController.text,
+          'phone_number': phoneController.text,
+          'email': emailController.text,
+          'description': descriptionController.text,
+        }).eq('id', refugeData?['id'] as String);
+      }
 
       setState(() => isEditing = false);
 
@@ -96,6 +161,32 @@ class _RefugeProfilePageState extends State<RefugeProfilePage> {
           SnackBar(content: Text('Error: $e')),
         );
       }
+    }
+  }
+
+  Future<void> _refreshRefugeData() async {
+    try {
+      final user = supabase.auth.currentUser;
+      if (user == null) return;
+
+      // Obtener datos del refugio (refuges.id == users.id)
+      final data = await supabase
+          .from('refuges')
+          .select()
+          .eq('id', user.id)
+          .maybeSingle();
+
+      if (data != null) {
+        setState(() {
+          refugeData = data;
+          nameController.text = data['name'] ?? '';
+          phoneController.text = data['phone_number'] ?? '';
+          // NO actualizar email en el refresh
+          descriptionController.text = data['description'] ?? '';
+        });
+      }
+    } catch (e) {
+      print('Error refreshing refuge data: $e');
     }
   }
 
@@ -123,12 +214,6 @@ class _RefugeProfilePageState extends State<RefugeProfilePage> {
             fontWeight: FontWeight.bold,
           ),
         ),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: () {
-            Navigator.pushReplacementNamed(context, '/refuge_home');
-          },
-        ),
         actions: [
           if (!isEditing)
             IconButton(
@@ -139,7 +224,10 @@ class _RefugeProfilePageState extends State<RefugeProfilePage> {
             ),
         ],
       ),
-      body: SingleChildScrollView(
+      body: RefreshIndicator(
+        onRefresh: _refreshRefugeData,
+        color: const Color(0xFF1ABC9C),
+        child: SingleChildScrollView(
         child: Column(
           children: [
             // Header con información del refugio
@@ -306,7 +394,7 @@ class _RefugeProfilePageState extends State<RefugeProfilePage> {
                               ),
                             ),
                             child: const Text(
-                              'Guardar cambios',
+                              'Actualizar',
                               style: TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.w600,
@@ -315,6 +403,30 @@ class _RefugeProfilePageState extends State<RefugeProfilePage> {
                           ),
                         ),
                       ],
+                    ),
+                    const SizedBox(height: 12),
+                  ] else ...[
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: () {
+                          setState(() => isEditing = true);
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF1ABC9C),
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                        child: const Text(
+                          'Editar información',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
                     ),
                     const SizedBox(height: 12),
                   ],
@@ -364,6 +476,7 @@ class _RefugeProfilePageState extends State<RefugeProfilePage> {
               ),
             ),
           ],
+        ),
         ),
       ),
     );
@@ -429,41 +542,83 @@ class _RefugeProfilePageState extends State<RefugeProfilePage> {
   }
 
   Widget _buildStatisticsSection() {
-    return FutureBuilder(
-      future: _loadStatistics(),
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) {
-          return const SizedBox.shrink();
-        }
-
-        final stats = snapshot.data as Map<String, int>;
-
-        return Row(
-          children: [
-            Expanded(
-              child: _StatBox(
-                title: 'Mascotas',
-                value: stats['total_pets']?.toString() ?? '0',
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _StatBox(
-                title: 'Solicitudes',
-                value: stats['total_requests']?.toString() ?? '0',
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _StatBox(
-                title: 'Adoptadas',
-                value: stats['adopted']?.toString() ?? '0',
-              ),
-            ),
-          ],
-        );
+    return _StatisticsWidget(
+      onDataChanged: () {
+        setState(() {});
       },
     );
+  }
+}
+
+class _StatisticsWidget extends StatefulWidget {
+  final VoidCallback? onDataChanged;
+  
+  const _StatisticsWidget({
+    Key? key,
+    this.onDataChanged,
+  }) : super(key: key);
+
+  @override
+  State<_StatisticsWidget> createState() => _StatisticsWidgetState();
+}
+
+class _StatisticsWidgetState extends State<_StatisticsWidget> {
+  final supabase = Supabase.instance.client;
+  late Future<Map<String, int>> _statisticsFuture;
+  
+  // Listeners para realtime
+  late PetsSyncService _petsSyncService;
+  late AdoptionRequestsSyncService _adoptionSyncService;
+  late Function(Map<String, dynamic>) _petsSyncCallback;
+  late Function(Map<String, dynamic>) _adoptionSyncCallback;
+
+  @override
+  void initState() {
+    super.initState();
+    _statisticsFuture = _loadStatistics();
+    
+    _petsSyncService = PetsSyncService();
+    _adoptionSyncService = AdoptionRequestsSyncService();
+    
+    _petsSyncCallback = (record) {
+      print('🔔 [_StatisticsWidget] Mascota modificada, recargando stats');
+      if (mounted) {
+        setState(() {
+          _statisticsFuture = _loadStatistics();
+        });
+        widget.onDataChanged?.call();
+      }
+    };
+    
+    _adoptionSyncCallback = (record) {
+      print('🔔 [_StatisticsWidget] Solicitud modificada, recargando stats');
+      if (mounted) {
+        setState(() {
+          _statisticsFuture = _loadStatistics();
+        });
+        widget.onDataChanged?.call();
+      }
+    };
+    
+    _initializeListeners();
+  }
+  
+  Future<void> _initializeListeners() async {
+    try {
+      await _petsSyncService.startListening();
+      await _adoptionSyncService.startListening();
+      _petsSyncService.addListener(_petsSyncCallback);
+      _adoptionSyncService.addListener(_adoptionSyncCallback);
+    } catch (e) {
+      print('❌ [_StatisticsWidget] Error: $e');
+    }
+  }
+  
+  @override
+  void dispose() {
+    _petsSyncService.removeListener(_petsSyncCallback);
+    _adoptionSyncService.removeListener(_adoptionSyncCallback);
+    super.dispose();
   }
 
   Future<Map<String, int>> _loadStatistics() async {
@@ -487,7 +642,8 @@ class _RefugeProfilePageState extends State<RefugeProfilePage> {
       final requestsCount = await supabase
           .from('adoption_requests')
           .select('id')
-          .eq('refuge_id', refugeId);
+          .eq('refuge_id', refugeId)
+          .eq('status', 'pending');
 
       final adoptedCount = await supabase
           .from('adoption_requests')
@@ -504,6 +660,45 @@ class _RefugeProfilePageState extends State<RefugeProfilePage> {
       print('Error loading statistics: $e');
       return {};
     }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder(
+      future: _statisticsFuture,
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) {
+          return const SizedBox.shrink();
+        }
+
+        final stats = snapshot.data as Map<String, int>;
+
+        return Row(
+          children: [
+            Expanded(
+              child: _StatBox(
+                title: 'Mascotas',
+                value: stats['total_pets']?.toString() ?? '0',
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _StatBox(
+                title: 'Pendientes',
+                value: stats['total_requests']?.toString() ?? '0',
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _StatBox(
+                title: 'Adoptadas',
+                value: stats['adopted']?.toString() ?? '0',
+              ),
+            ),
+          ],
+        );
+      },
+    );
   }
 }
 

@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 
 class EmailVerificationSentPage extends StatelessWidget {
   final String email;
+  final String? displayName;
 
   const EmailVerificationSentPage({
     super.key,
     required this.email,
+    this.displayName,
   });
 
   @override

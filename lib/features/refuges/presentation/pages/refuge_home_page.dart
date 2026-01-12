@@ -3,6 +3,9 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../../injection_container.dart';
 import '../../../../core/repositories/adoption_requests_repository.dart';
 import '../../../../core/services/notification_service.dart';
+import '../../../../core/services/adoption_requests_sync_service.dart';
+import '../../../../core/services/pets_sync_service.dart';
+import '../../../../core/utils/pet_age_calculator.dart';
 
 class RefugeHomePage extends StatefulWidget {
   const RefugeHomePage({Key? key}) : super(key: key);
@@ -18,28 +21,97 @@ class _RefugeHomePageState extends State<RefugeHomePage> {
   int totalPets = 0;
   int pendingRequests = 0;
   int adoptedPets = 0;
+  
+  // Referencias a los callbacks para poder removerlos después
+  late Function(Map<String, dynamic>) _petsSyncCallback;
+  late Function(Map<String, dynamic>) _adoptionSyncCallback;
+  
+  // Servicios como variables para evitar crear nuevas instancias
+  late PetsSyncService _petsSyncService;
+  late AdoptionRequestsSyncService _adoptionSyncService;
 
   @override
   void initState() {
     super.initState();
     adoptionRepository = getIt<AdoptionRequestsRepository>();
+    _petsSyncService = PetsSyncService();
+    _adoptionSyncService = AdoptionRequestsSyncService();
     _loadRefugeData();
+    
+    // Crear callbacks con referencias permanentes
+    _petsSyncCallback = (record) {
+      print('🔔 [HOME] Cambio detectado en mascotas');
+      print('  - Record: ${record['id']}, refuge_id: ${record['refuge_id']}');
+      if (mounted) {
+        setState(() {
+          print('  ✅ [HOME] Recargando mascotas');
+          _loadRefugeData();
+        });
+      }
+    };
+    
+    _adoptionSyncCallback = (record) {
+      print('🔔 [HOME] Cambio detectado en adoption_requests');
+      if (mounted) {
+        setState(() {
+          print('  ✅ [HOME] Recargando solicitudes');
+          _loadRefugeData();
+        });
+      }
+    };
+    
+    // Inicializar listeners en background (esto debe ser PRIMERO)
+    _initializeListeners();
+  }
+
+  Future<void> _initializeListeners() async {
+    try {
+      print('🔧 [RefugeHomePage] Iniciando listeners...');
+      // 1. Asegurar que los servicios estén escuchando PRIMERO
+      await _petsSyncService.startListening();
+      print('✅ [RefugeHomePage] PetsSyncService está escuchando');
+      
+      await _adoptionSyncService.startListening();
+      print('✅ [RefugeHomePage] AdoptionSyncService está escuchando');
+      
+      // 2. Ahora agregar los listeners (después de que estén suscritos)
+      _petsSyncService.addListener(_petsSyncCallback);
+      print('✅ [RefugeHomePage] Listener de pets agregado');
+      
+      _adoptionSyncService.addListener(_adoptionSyncCallback);
+      print('✅ [RefugeHomePage] Listener de adoption agregado');
+      
+      print('✅ Listeners inicializados correctamente en RefugeHomePage');
+    } catch (e) {
+      print('❌ Error inicializando listeners en RefugeHomePage: $e');
+    }
+  }
+
+  @override
+  void dispose() {
+    _petsSyncService.removeListener(_petsSyncCallback);
+    _adoptionSyncService.removeListener(_adoptionSyncCallback);
+    super.dispose();
   }
 
   Future<void> _loadRefugeData() async {
     try {
       final user = supabase.auth.currentUser;
+      print('🔍 _loadRefugeData: user.id = ${user?.id}');
       if (user == null) return;
 
-      // Obtener datos del refugio
+      // Obtener datos del refugio (refuges.id == users.id)
       final refugeData = await supabase
           .from('refuges')
           .select('name, id')
           .eq('id', user.id)
           .maybeSingle();
 
+      print('🔍 _loadRefugeData: refugeData = $refugeData');
+
       if (refugeData != null) {
         final refugeId = refugeData['id'];
+        print('🔍 _loadRefugeData: refugeId = $refugeId');
 
         // Obtener total de mascotas
         final petsCount = await supabase
@@ -77,8 +149,11 @@ class _RefugeHomePageState extends State<RefugeHomePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.grey[50],
-      body: SingleChildScrollView(
-        child: Column(
+      body: RefreshIndicator(
+        onRefresh: _loadRefugeData,
+        color: const Color(0xFF1ABC9C),
+        child: SingleChildScrollView(
+          child: Column(
           children: [
             // Header
             Container(
@@ -196,60 +271,30 @@ class _RefugeHomePageState extends State<RefugeHomePage> {
                     ],
                   ),
                   const SizedBox(height: 16),
-                  _RecentRequestsCard(),
+                  _RecentRequestsCard(
+                    onRequestsUpdated: _loadRefugeData,
+                  ),
                   const SizedBox(height: 24),
                   // Mis Mascotas
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        'Mis Mascotas',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      GestureDetector(
-                        onTap: () {
-                          Navigator.pushNamed(context, '/refuge_pets');
-                        },
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF1ABC9C),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
-                          ),
-                          child: const Row(
-                            children: [
-                              Icon(
-                                Icons.add,
-                                color: Colors.white,
-                                size: 18,
-                              ),
-                              SizedBox(width: 4),
-                              Text(
-                                'Agregar',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
+                  const Text(
+                    'Mis Mascotas',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                   const SizedBox(height: 16),
-                  _MyPetsCard(),
+                  _MyPetsCard(
+                    onPetChanged: () {
+                      // Recargar stats del padre cuando cambian las mascotas
+                      _loadRefugeData();
+                    },
+                  ),
                 ],
               ),
             ),
           ],
+        ),
         ),
       ),
     );
@@ -305,17 +350,63 @@ class _StatCard extends StatelessWidget {
 }
 
 class _RecentRequestsCard extends StatefulWidget {
+  final VoidCallback onRequestsUpdated;
+
+  const _RecentRequestsCard({
+    Key? key,
+    required this.onRequestsUpdated,
+  }) : super(key: key);
+
   @override
   State<_RecentRequestsCard> createState() => _RecentRequestsCardState();
 }
 
 class _RecentRequestsCardState extends State<_RecentRequestsCard> {
   final supabase = Supabase.instance.client;
+  late Future<List<dynamic>> _requestsFuture;
+  
+  // Listeners para realtime
+  late AdoptionRequestsSyncService _adoptionSyncService;
+  late Function(Map<String, dynamic>) _adoptionSyncCallback;
+
+  @override
+  void initState() {
+    super.initState();
+    _requestsFuture = _loadRecentRequests();
+    
+    _adoptionSyncService = AdoptionRequestsSyncService();
+    
+    _adoptionSyncCallback = (record) {
+      print('🔔 [_RecentRequestsCard] Solicitud modificada, recargando');
+      if (mounted) {
+        setState(() {
+          _requestsFuture = _loadRecentRequests();
+        });
+      }
+    };
+    
+    _initializeListeners();
+  }
+  
+  Future<void> _initializeListeners() async {
+    try {
+      await _adoptionSyncService.startListening();
+      _adoptionSyncService.addListener(_adoptionSyncCallback);
+    } catch (e) {
+      print('❌ [_RecentRequestsCard] Error: $e');
+    }
+  }
+  
+  @override
+  void dispose() {
+    _adoptionSyncService.removeListener(_adoptionSyncCallback);
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return FutureBuilder(
-      future: _loadRecentRequests(),
+      future: _requestsFuture,
       builder: (context, snapshot) {
         if (!snapshot.hasData) {
           return const Center(child: CircularProgressIndicator());
@@ -350,7 +441,7 @@ class _RecentRequestsCardState extends State<_RecentRequestsCard> {
                 child: _RequestItem(
                   request: request,
                   onStatusChanged: () {
-                    setState(() {});
+                    widget.onRequestsUpdated();
                   },
                 ),
               );
@@ -377,7 +468,7 @@ class _RecentRequestsCardState extends State<_RecentRequestsCard> {
       final requests = await supabase
           .from('adoption_requests')
           .select(
-            'id, status, created_at, users(name), pets(name, photo_urls)',
+            'id, status, created_at, users(name), pets(name, photo_url)',
           )
           .eq('refuge_id', refugeData['id'])
           .order('created_at', ascending: false)
@@ -428,10 +519,11 @@ class _RequestItemState extends State<_RequestItem> {
       }
 
       // Actualizar en la base de datos
-      await supabase
+      final updateResult = await supabase
           .from('adoption_requests')
           .update({'status': newStatus})
-          .eq('id', widget.request['id']);
+          .eq('id', widget.request['id'])
+          .select();
 
       // Enviar notificación al adoptador
       final notificationService = getIt<NotificationService>();
@@ -447,6 +539,13 @@ class _RequestItemState extends State<_RequestItem> {
           refugeName: refugeName,
           petName: petName,
         );
+      }
+
+      // Notificar a AdoptionRequestsSyncService que cambió una solicitud
+      if (updateResult.isNotEmpty) {
+        final updatedRequest = updateResult[0] as Map<String, dynamic>;
+        AdoptionRequestsSyncService().notifyListeners(updatedRequest);
+        print('✅ Notificación enviada a AdoptionRequestsSyncService');
       }
 
       widget.onStatusChanged();
@@ -475,12 +574,30 @@ class _RequestItemState extends State<_RequestItem> {
               color: Colors.amber[100],
               borderRadius: BorderRadius.circular(8),
             ),
-            child: Center(
-              child: Text(
-                widget.request['pets']?['name']?[0]?.toUpperCase() ?? '🐾',
-                style: const TextStyle(fontSize: 24),
-              ),
-            ),
+            child: widget.request['pets']?['photo_url'] != null &&
+                    (widget.request['pets']?['photo_url'] as String).isNotEmpty
+                ? ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.network(
+                      widget.request['pets']?['photo_url'] ?? '',
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) {
+                        return Center(
+                          child: Text(
+                            widget.request['pets']?['name']?[0]?.toUpperCase() ??
+                                '🐾',
+                            style: const TextStyle(fontSize: 24),
+                          ),
+                        );
+                      },
+                    ),
+                  )
+                : Center(
+                    child: Text(
+                      widget.request['pets']?['name']?[0]?.toUpperCase() ?? '🐾',
+                      style: const TextStyle(fontSize: 24),
+                    ),
+                  ),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -515,14 +632,16 @@ class _RequestItemState extends State<_RequestItem> {
             Row(
               children: [
                 GestureDetector(
-                  onTap: widget.request['status'] != 'approved'
+                  onTap: widget.request['status'] == 'pending'
                       ? () => _updateStatus('approved')
                       : null,
                   child: Container(
                     decoration: BoxDecoration(
                       color: widget.request['status'] == 'approved'
                           ? const Color(0xFF1ABC9C)
-                          : const Color(0xFF1ABC9C).withOpacity(0.1),
+                          : widget.request['status'] == 'rejected'
+                              ? Colors.grey.withOpacity(0.2)
+                              : const Color(0xFF1ABC9C).withOpacity(0.1),
                       borderRadius: BorderRadius.circular(6),
                     ),
                     padding: const EdgeInsets.all(8),
@@ -530,21 +649,25 @@ class _RequestItemState extends State<_RequestItem> {
                       Icons.check,
                       color: widget.request['status'] == 'approved'
                           ? Colors.white
-                          : const Color(0xFF1ABC9C),
+                          : widget.request['status'] == 'rejected'
+                              ? Colors.grey
+                              : const Color(0xFF1ABC9C),
                       size: 16,
                     ),
                   ),
                 ),
                 const SizedBox(width: 8),
                 GestureDetector(
-                  onTap: widget.request['status'] != 'rejected'
+                  onTap: widget.request['status'] == 'pending'
                       ? () => _updateStatus('rejected')
                       : null,
                   child: Container(
                     decoration: BoxDecoration(
                       color: widget.request['status'] == 'rejected'
                           ? Colors.red
-                          : Colors.red.withOpacity(0.1),
+                          : widget.request['status'] == 'approved'
+                              ? Colors.grey.withOpacity(0.2)
+                              : Colors.red.withOpacity(0.1),
                       borderRadius: BorderRadius.circular(6),
                     ),
                     padding: const EdgeInsets.all(8),
@@ -552,7 +675,9 @@ class _RequestItemState extends State<_RequestItem> {
                       Icons.close,
                       color: widget.request['status'] == 'rejected'
                           ? Colors.white
-                          : Colors.red,
+                          : widget.request['status'] == 'approved'
+                              ? Colors.grey
+                              : Colors.red,
                       size: 16,
                     ),
                   ),
@@ -566,17 +691,80 @@ class _RequestItemState extends State<_RequestItem> {
 }
 
 class _MyPetsCard extends StatefulWidget {
+  final VoidCallback? onPetChanged;
+  
+  const _MyPetsCard({
+    Key? key,
+    this.onPetChanged,
+  }) : super(key: key);
+
   @override
   State<_MyPetsCard> createState() => _MyPetsCardState();
 }
 
 class _MyPetsCardState extends State<_MyPetsCard> {
   final supabase = Supabase.instance.client;
+  late Future<List<dynamic>> _petsFuture;
+  
+  // Servicios y callbacks para realtime
+  late PetsSyncService _petsSyncService;
+  late AdoptionRequestsSyncService _adoptionSyncService;
+  late Function(Map<String, dynamic>) _petsSyncCallback;
+  late Function(Map<String, dynamic>) _adoptionSyncCallback;
+
+  @override
+  void initState() {
+    super.initState();
+    _petsFuture = _loadMyPets();
+    
+    _petsSyncService = PetsSyncService();
+    _adoptionSyncService = AdoptionRequestsSyncService();
+    
+    _petsSyncCallback = (record) {
+      print('🔔 [_MyPetsCard] Mascota modificada, recargando lista');
+      if (mounted) {
+        setState(() {
+          _petsFuture = _loadMyPets();
+        });
+        widget.onPetChanged?.call();
+      }
+    };
+    
+    _adoptionSyncCallback = (record) {
+      print('🔔 [_MyPetsCard] Solicitud modificada, recargando lista');
+      if (mounted) {
+        setState(() {
+          _petsFuture = _loadMyPets();
+        });
+        widget.onPetChanged?.call();
+      }
+    };
+    
+    _initializeListeners();
+  }
+  
+  Future<void> _initializeListeners() async {
+    try {
+      await _petsSyncService.startListening();
+      await _adoptionSyncService.startListening();
+      _petsSyncService.addListener(_petsSyncCallback);
+      _adoptionSyncService.addListener(_adoptionSyncCallback);
+    } catch (e) {
+      print('❌ [_MyPetsCard] Error listeners: $e');
+    }
+  }
+  
+  @override
+  void dispose() {
+    _petsSyncService.removeListener(_petsSyncCallback);
+    _adoptionSyncService.removeListener(_adoptionSyncCallback);
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return FutureBuilder(
-      future: _loadMyPets(),
+      future: _petsFuture,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator());
@@ -625,7 +813,17 @@ class _MyPetsCardState extends State<_MyPetsCard> {
               final pet = pets[index];
               return Padding(
                 padding: const EdgeInsets.only(bottom: 12),
-                child: _PetCard(pet: pet),
+                child: _PetCard(
+                  pet: pet,
+                  onPetDeleted: () {
+                    // Recargar mascotas cuando se elimina una
+                    setState(() {
+                      _petsFuture = _loadMyPets();
+                    });
+                    // Notificar al padre que recargue los stats
+                    widget.onPetChanged?.call();
+                  },
+                ),
               );
             },
           ),
@@ -637,49 +835,18 @@ class _MyPetsCardState extends State<_MyPetsCard> {
   Future<List<dynamic>> _loadMyPets() async {
     try {
       final user = supabase.auth.currentUser;
-      print('=== DEBUG: Usuario actual ===');
-      print('User ID: ${user?.id}');
-      print('User email: ${user?.email}');
-      
-      if (user == null) {
-        print('ERROR: No hay usuario autenticado');
-        return [];
-      }
+      print('🔍 _loadMyPets: user.id = ${user?.id}');
+      if (user == null) return [];
 
-      final refugeData = await supabase
-          .from('refuges')
-          .select('id')
-          .eq('id', user.id)
-          .maybeSingle();
-
-      print('=== DEBUG: Datos del refugio ===');
-      print('Refugio data: $refugeData');
-      print('Refugio ID: ${refugeData?['id']}');
-
-      if (refugeData == null) {
-        print('ERROR: No se encontró refugio para este usuario');
-        return [];
-      }
-
-      print('\n=== DEBUG: Buscando mascotas ===');
-      print('Buscando con refuge_id: ${refugeData['id']}');
-
+      // Obtener mascotas del refugio (refuges.id == users.id, así que usamos user.id directamente)
       final pets = await supabase
           .from('pets')
-          .select('id, name, species, refuge_id, created_at')
-          .eq('refuge_id', refugeData['id']);
+          .select('id, name, species, refuge_id, created_at, photo_url, age_in_months, breed')
+          .eq('refuge_id', user.id);
 
-      print('Total de mascotas encontradas: ${pets.length}');
+      print('🔍 _loadMyPets: Mascotas encontradas: ${pets.length}');
       for (var pet in pets) {
-        print('- Mascota: ${pet['name']} (${pet['species']}) - ID: ${pet['id']}');
-      }
-
-      // DEBUG: Obtener TODAS las mascotas sin filtro
-      print('\n=== DEBUG: Verificando TODAS las mascotas en la tabla ===');
-      final allPets = await supabase.from('pets').select('id, name, refuge_id');
-      print('Total de mascotas en la tabla (sin filtro): ${allPets.length}');
-      for (var pet in allPets) {
-        print('- ID: ${pet['id']} | Nombre: ${pet['name']} | Refuge ID: ${pet['refuge_id']}');
+        print('  - ${pet['name']} (refuge_id: ${pet['refuge_id']})');
       }
 
       return pets;
@@ -693,8 +860,12 @@ class _MyPetsCardState extends State<_MyPetsCard> {
 
 class _PetCard extends StatefulWidget {
   final dynamic pet;
+  final VoidCallback? onPetDeleted;
 
-  const _PetCard({required this.pet});
+  const _PetCard({
+    required this.pet,
+    this.onPetDeleted,
+  });
 
   @override
   State<_PetCard> createState() => _PetCardState();
@@ -741,12 +912,29 @@ class _PetCardState extends State<_PetCard> {
               color: const Color(0xFF1ABC9C).withOpacity(0.1),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: Center(
-              child: Text(
-                _getSpeciesEmoji(widget.pet['species']),
-                style: const TextStyle(fontSize: 40),
-              ),
-            ),
+            child: widget.pet['photo_url'] != null &&
+                    widget.pet['photo_url'].toString().isNotEmpty
+                ? ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Image.network(
+                      widget.pet['photo_url'],
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) {
+                        return Center(
+                          child: Text(
+                            _getSpeciesEmoji(widget.pet['species']),
+                            style: const TextStyle(fontSize: 40),
+                          ),
+                        );
+                      },
+                    ),
+                  )
+                : Center(
+                    child: Text(
+                      _getSpeciesEmoji(widget.pet['species']),
+                      style: const TextStyle(fontSize: 40),
+                    ),
+                  ),
           ),
           const SizedBox(width: 16),
           Expanded(
@@ -759,6 +947,30 @@ class _PetCardState extends State<_PetCard> {
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
                   ),
+                ),
+                const SizedBox(height: 4),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.pet['age_in_months'] != null && widget.pet['age_in_months'] > 0
+                        ? '${PetAgeCalculator.calculateHumanAge(widget.pet['age_in_months'])}'
+                        : 'N/A',
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFFFF6B35),
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Edad Humana',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 4),
                 Container(
@@ -814,7 +1026,10 @@ class _PetCardState extends State<_PetCard> {
                   Navigator.pushNamed(
                     context,
                     '/edit_pet_refuge',
-                    arguments: widget.pet,
+                    arguments: {
+                      'pet': widget.pet,
+                      'readOnly': false,
+                    },
                   ).then((_) => setState(() {}));
                 },
                 child: Container(
@@ -894,6 +1109,8 @@ class _PetCardState extends State<_PetCard> {
             ),
           );
           setState(() {});
+          // Notificar al padre que recargue la lista
+          widget.onPetDeleted?.call();
         }
       } catch (e) {
         if (mounted) {

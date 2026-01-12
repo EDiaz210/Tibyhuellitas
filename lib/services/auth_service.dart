@@ -1,4 +1,5 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import '../models/user.dart';
 
 class AuthService {
@@ -104,6 +105,38 @@ class AuthService {
     } catch (e) {
       print('Error during logout: $e');
       rethrow;
+    }
+  }
+
+  // Google Sign-In DIRECTO - sin pasar clientId, deja que Android lo maneje
+  Future<bool> signInWithGoogle() async {
+    try {
+      print('🔵 [GOOGLE SIGNIN] Iniciando proceso de Google Sign-In...');
+      
+      // GoogleSignIn sin parámetros - Android obtiene el clientId automáticamente
+      final GoogleSignIn googleSignIn = GoogleSignIn(
+        scopes: ['email', 'profile'],
+      );
+
+      print('🔵 [GOOGLE SIGNIN] Limpiando sesión anterior...');
+      await googleSignIn.signOut();
+
+      print('🔵 [GOOGLE SIGNIN] Abriendo selector de cuentas de Google...');
+      final GoogleSignInAccount? googleUser = await googleSignIn.signIn();
+
+      if (googleUser == null) {
+        print('❌ [GOOGLE SIGNIN] Usuario canceló Google Sign-In');
+        return false;
+      }
+
+      print('✅ [GOOGLE SIGNIN] Usuario seleccionó: ${googleUser.email}');
+      print('   Nombre: ${googleUser.displayName}');
+      print('   ID: ${googleUser.id}');
+      return true;
+      
+    } catch (e) {
+      print('❌ [GOOGLE SIGNIN ERROR] $e');
+      return false;
     }
   }
 

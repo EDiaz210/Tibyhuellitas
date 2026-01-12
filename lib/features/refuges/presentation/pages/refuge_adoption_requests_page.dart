@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../../../core/services/adoption_requests_sync_service.dart';
+import '../../../../core/services/pets_sync_service.dart';
 
 class RefugeAdoptionRequestsPage extends StatefulWidget {
   const RefugeAdoptionRequestsPage({Key? key}) : super(key: key);
@@ -16,6 +18,81 @@ class _RefugeAdoptionRequestsPageState
   final List<String> tabs = ['Todas', 'Pendientes', 'Aprobadas', 'Rechazadas'];
   final List<String> statuses = ['pending', 'approved', 'rejected'];
 
+  // Servicios como variables para evitar crear nuevas instancias
+  late PetsSyncService _petsSyncService;
+  late AdoptionRequestsSyncService _adoptionSyncService;
+  
+  // Referencias a los callbacks para poder removerlos después
+  late Function(Map<String, dynamic>) _petsSyncCallback;
+  late Function(Map<String, dynamic>) _adoptionSyncCallback;
+
+  @override
+  void initState() {
+    super.initState();
+    
+    // Obtener referencias a los servicios singleton
+    _petsSyncService = PetsSyncService();
+    _adoptionSyncService = AdoptionRequestsSyncService();
+    
+    // Crear callbacks con referencias permanentes
+    _petsSyncCallback = (record) {
+      print('🔔 [AdoptionRequestsPage] Cambio en mascotas');
+      if (mounted) {
+        setState(() {
+          // Trigger rebuild
+        });
+      }
+    };
+    
+    _adoptionSyncCallback = (record) {
+      print('🔔 [AdoptionRequestsPage] Cambio en solicitudes, recargando');
+      if (mounted) {
+        setState(() {
+          // Trigger rebuild
+        });
+      }
+    };
+    
+    // Inicializar listeners en background
+    _initializeListeners();
+  }
+
+  Future<void> _initializeListeners() async {
+    try {
+      print('🔧 [AdoptionRequestsPage] Iniciando listeners...');
+      // 1. Asegurar que los servicios estén escuchando PRIMERO
+      await _petsSyncService.startListening();
+      print('✅ [AdoptionRequestsPage] PetsSyncService escuchando');
+      
+      await _adoptionSyncService.startListening();
+      print('✅ [AdoptionRequestsPage] AdoptionSyncService escuchando');
+      
+      // 2. AHORA agregar listeners
+      _petsSyncService.addListener(_petsSyncCallback);
+      print('✅ [AdoptionRequestsPage] Listener de pets agregado');
+      
+      _adoptionSyncService.addListener(_adoptionSyncCallback);
+      print('✅ [AdoptionRequestsPage] Listener de adoption agregado');
+      
+      print('✅ [AdoptionRequestsPage] Listeners inicializados correctamente');
+    } catch (e) {
+      print('❌ [AdoptionRequestsPage] Error inicializando listeners: $e');
+    }
+  }
+
+  @override
+  void dispose() {
+    _petsSyncService.removeListener(_petsSyncCallback);
+    _adoptionSyncService.removeListener(_adoptionSyncCallback);
+    super.dispose();
+  }
+
+  Future<void> _refreshRequests() async {
+    setState(() {
+      // Refresh by reloading
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -30,47 +107,41 @@ class _RefugeAdoptionRequestsPageState
             fontWeight: FontWeight.bold,
           ),
         ),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: () => Navigator.pop(context),
-        ),
       ),
-      body: Column(
-        children: [
-          // Tabs
-          Container(
-            color: const Color(0xFF1ABC9C),
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: List.generate(
-                  tabs.length,
-                  (index) => GestureDetector(
-                    onTap: () {
-                      setState(() => _selectedTabIndex = index);
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 16,
-                      ),
-                      decoration: BoxDecoration(
-                        border: Border(
-                          bottom: BorderSide(
-                            color: _selectedTabIndex == index
-                                ? Colors.white
-                                : Colors.transparent,
-                            width: 3,
-                          ),
+      body: RefreshIndicator(
+        onRefresh: _refreshRequests,
+        color: const Color(0xFF1ABC9C),
+        child: Column(
+          children: [
+            // Filtros como chips
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: List.generate(
+                    tabs.length,
+                    (index) => Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: FilterChip(
+                        selected: _selectedTabIndex == index,
+                        label: Text(tabs[index]),
+                        onSelected: (selected) {
+                          setState(() => _selectedTabIndex = index);
+                        },
+                        backgroundColor: Colors.white,
+                        selectedColor: const Color(0xFF1ABC9C),
+                        side: BorderSide(
+                          color: _selectedTabIndex == index
+                              ? const Color(0xFF1ABC9C)
+                              : Colors.grey[300]!,
+                          width: 1.5,
                         ),
-                      ),
-                      child: Text(
-                        tabs[index],
-                        style: TextStyle(
-                          color: Colors.white,
+                        labelStyle: TextStyle(
+                          color: _selectedTabIndex == index
+                              ? Colors.white
+                              : Colors.grey[700],
                           fontWeight: FontWeight.w600,
-                          fontSize: 13,
                         ),
                       ),
                     ),
@@ -78,12 +149,12 @@ class _RefugeAdoptionRequestsPageState
                 ),
               ),
             ),
-          ),
-          // Contenido
-          Expanded(
-            child: _buildContent(),
-          ),
-        ],
+            // Contenido
+            Expanded(
+              child: _buildContent(),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -131,27 +202,21 @@ class _RefugeAdoptionRequestsPageState
           );
         }
 
-        return RefreshIndicator(
-          onRefresh: () async {
-            setState(() {});
+        return ListView.builder(
+          padding: const EdgeInsets.all(16),
+          itemCount: requests.length,
+          itemBuilder: (context, index) {
+            final request = requests[index];
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: _RequestCard(
+                request: request,
+                onStatusChanged: () {
+                  setState(() {});
+                },
+              ),
+            );
           },
-          color: const Color(0xFF1ABC9C),
-          child: ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: requests.length,
-            itemBuilder: (context, index) {
-              final request = requests[index];
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: _RequestCard(
-                  request: request,
-                  onStatusChanged: () {
-                    setState(() {});
-                  },
-                ),
-              );
-            },
-          ),
         );
       },
     );
@@ -192,7 +257,7 @@ class _RefugeAdoptionRequestsPageState
         var query = supabase
             .from('adoption_requests')
             .select(
-              'id, status, created_at, user_id, pet_id, refuge_id, users(id, name, email), pets(id, name, species)',
+              'id, status, created_at, user_id, pet_id, refuge_id, users(id, name, email), pets(id, name, species, photo_url)',
             )
             .eq('refuge_id', refugeId);
 
@@ -275,12 +340,31 @@ class _RequestCardState extends State<_RequestCard> {
                   color: Colors.amber[100],
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: Center(
-                  child: Text(
-                    widget.request['pets']?['name']?[0]?.toUpperCase() ?? '🐾',
-                    style: const TextStyle(fontSize: 28),
-                  ),
-                ),
+                child: widget.request['pets']?['photo_url'] != null &&
+                        (widget.request['pets']?['photo_url'] as String).isNotEmpty
+                    ? ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: Image.network(
+                          widget.request['pets']?['photo_url'] ?? '',
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) {
+                            return Center(
+                              child: Text(
+                                widget.request['pets']?['name']?[0]
+                                        ?.toUpperCase() ??
+                                    '🐾',
+                                style: const TextStyle(fontSize: 28),
+                              ),
+                            );
+                          },
+                        ),
+                      )
+                    : Center(
+                        child: Text(
+                          widget.request['pets']?['name']?[0]?.toUpperCase() ?? '🐾',
+                          style: const TextStyle(fontSize: 28),
+                        ),
+                      ),
               ),
               const SizedBox(width: 16),
               Expanded(
